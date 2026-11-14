@@ -16,6 +16,7 @@ import type {
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { AgentCommandError, agentStatusUrl, EXTENSION_REPORTED_CODE, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
+import { isAgentBusyRefusal } from "@/lib/agent-busy-refusal";
 import { createSideChat, SIDE_REFUSAL_MESSAGES } from "@/lib/side-chat-client";
 import { missingCwdFromBody } from "@/lib/missing-cwd";
 import { forkFailureMessage } from "@/lib/sidebar-actions";
@@ -595,6 +596,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const liveFollowFrameRef = useRef<number | null>(null);
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const handleNavigateRef = useRef<((entryId: string) => Promise<boolean>) | undefined>(undefined);
+  const sendStreamingPromptRef = useRef<((message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => Promise<void>) | undefined>(undefined);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   // The command list as last loaded, and the get_commands request under way, if
@@ -2430,6 +2432,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         void waitForPromptSettlement(sentSessionId, promptRunId);
       }
     } catch (e) {
+      // Fork: another client (an MCP agent, another tab) started a run this page
+      // has not heard of. Queue the text as a follow-up; an edit must branch, so
+      // it keeps the refusal.
+      if (sentSessionId && !editEntryId && isAgentBusyRefusal(e)) {
+        rpcPromptPendingRef.current = false;
+        dropOptimisticUserMessage();
+        await sendStreamingPromptRef.current?.(message, "followUp", images);
+        void reconcileAgentState(sentSessionId);
+        return;
+      }
       console.error("Failed to send message:", e);
       const definitivelyRejected = !promptRequestStarted || isPromptRejectedError(e);
       // A transport/proxy failure after dispatch is ambiguous: the server may
@@ -3125,6 +3137,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       else addUnconfirmedSendNotice();
     }
   }, [addNotice, addUnconfirmedSendNotice, composerDraftKey, editEntryId, restoreSubmission]);
+  sendStreamingPromptRef.current = sendStreamingPrompt;
 
   const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
     await sendStreamingPrompt(message, "steer", images);
