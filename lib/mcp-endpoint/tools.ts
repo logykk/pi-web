@@ -227,8 +227,7 @@ function requiredCursor(text: string): Cursor {
   return cursor;
 }
 
-/** One line, at most `max` characters. */
-export function oneLine(text: string, max: number): string {
+function oneLine(text: string, max: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }

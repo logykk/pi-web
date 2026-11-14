@@ -116,7 +116,7 @@ export interface PiWebPorts {
 
 /** Covers an agent away doing its own work between calls; the idle timer is 10 min. */
 export const HOLD_MS = 30 * 60_000;
-export const HOLD_PROVIDER_NAME = "pi-web-mcp-endpoint";
+const HOLD_PROVIDER_NAME = "pi-web-mcp-endpoint";
 
 const HOLDS = Symbol.for("pi-web.mcp-endpoint.holds");
 const WORKTREE_JOBS = Symbol.for("pi-web.mcp-endpoint.worktree-jobs");
