@@ -27,8 +27,8 @@ export const WAIT_MAX_MS = 50_000;
 export const WAIT_DEFAULT_MS = 45_000;
 /** How long pi_send waits for pi to take a message (cold start, extension binding, MCP servers). */
 export const SEND_ACCEPT_MS = 15_000;
-/** How long pi_new_session waits for the session to be built, before its first send. */
-export const CREATE_MS = 35_000;
+/** How long pi_new_session waits for the session to be built; with SEND_ACCEPT_MS after it, the call stays under WAIT_MAX_MS. */
+export const CREATE_MS = 30_000;
 /** How long pi_new_worktree waits for git before answering "still checking out". */
 export const WORKTREE_MS = 45_000;
 /** How long pi_stop waits for the run to unwind (a tool that ignores its abort signal can hold it). */
