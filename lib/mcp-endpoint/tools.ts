@@ -362,7 +362,7 @@ const DELTA_HEADING: Readonly<Record<WaitResult["delta"]["kind"], string>> = {
 function newsLine(send: SentMessage): string {
   const quoted = `"${oneLine(send.text, 80)}"`;
   if (send.outcome.state === "refused") return `pi did not take your message ${quoted}: ${send.outcome.reason}`;
-  return `Your message ${quoted} never reached pi: it left pi's queue without landing. Stop or Recall in pi-web moves queued messages into the person's composer.`;
+  return `Your message ${quoted} never reached pi: Stop or Recall took it out of pi's queue first (done in pi-web, that puts it in the person's composer).`;
 }
 
 function renderWait(id: string, result: WaitResult): ToolText {

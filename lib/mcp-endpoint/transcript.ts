@@ -256,7 +256,7 @@ export function renderMessages(
         const calls = message.content.filter((block) => block.type === "toolCall");
         const lines: string[] = [];
         if (text) lines.push(`[pi] ${clip(text, index === lastReply ? budget.lastAssistantText : budget.assistantText)}${flag}`);
-        else if (flag || calls.length === 0) lines.push(`[pi]${flag || " (no text)"}`);
+        else lines.push(`[pi]${flag || (calls.length === 0 ? " (no text)" : "")}`);
         for (const call of calls) {
           lines.push(`  - ${call.toolName} ${clip(JSON.stringify(call.input ?? {}), budget.toolArgs)} -> ${resultLine(results.get(call.toolCallId), budget, options.endsAtNewest)}`);
         }
