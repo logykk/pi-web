@@ -8,6 +8,7 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url, { alias: { "@": process.cwd() }, interopDefault: true });
 const { DELETE, GET, POST } = await jiti.import("./route.ts");
 const { invalidateSessionListCache } = await jiti.import("../../lib/session-reader.ts");
+const { getRpcSession } = await jiti.import("../../lib/rpc-manager.ts");
 
 const TOKEN = "route-test-token-0123456789abcdef0123";
 const BASE = "http://127.0.0.1:30999/mcp";
@@ -46,7 +47,7 @@ test("with no token configured, /mcp answers 404 to every method", async (t) => 
   assert.equal((await DELETE(mcp(null, { method: "DELETE" }))).status, 404);
 });
 
-test("the wire: guard, methods, version header, initialize, batches, notifications and pi_sessions", async (t) => {
+test("the wire: guard, methods, version header, initialize, batches, notifications, pi_sessions and pi_read", async (t) => {
   const agentDir = await mkdtemp(join(tmpdir(), "pi-web-mcp-endpoint-route-"));
   const project = join(agentDir, "project");
   await mkdir(project);
@@ -107,11 +108,19 @@ test("the wire: guard, methods, version header, initialize, batches, notificatio
   assert.deepEqual(await batch.json(), [{ jsonrpc: "2.0", id: 2, result: {} }]);
 
   const listed = await (await POST(mcp({ jsonrpc: "2.0", id: 3, method: "tools/list" }, { headers: { "mcp-protocol-version": "2025-11-25" } }))).json();
-  assert.ok(listed.result.tools.some((tool) => tool.name === "pi_sessions"));
+  assert.equal(listed.result.tools.length, 8);
 
   const sessions = await (await POST(mcp({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "pi_sessions", arguments: {} } }))).json();
   assert.equal(sessions.result.isError, false);
   assert.match(sessions.result.content[0].text, /mcp-route-seeded \[idle\] "Seeded question for the MCP route" in /);
+  const read = await (await POST(mcp({ jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "pi_read", arguments: { session: "http://127.0.0.1:30999/?session=mcp-route-seeded" } } }))).json();
+  const text = read.result.content[0].text;
+  assert.match(text, /^Session mcp-route-seeded "Seeded question for the MCP route" in /);
+  assert.match(text, /pi-web link: http:\/\/127\.0\.0\.1:30999\/\?session=mcp-route-seeded\n/, "links use the request's Host");
+  assert.match(text, /\npi is idle \(the session is not loaded\)\.\n/);
+  assert.match(text, /\n\[user\] Seeded question for the MCP route\n\[pi\] Seeded answer\.\n/);
+  assert.match(text, /\ncursor: a1~0~[0-9a-z]+$/);
+  assert.equal(getRpcSession("mcp-route-seeded"), undefined, "reading starts no session");
   const filtered = await (await POST(mcp({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "pi_sessions", arguments: { cwd: join(agentDir, "nowhere") } } }))).json();
   assert.equal(filtered.result.isError, true);
   assert.match(filtered.result.content[0].text, /does not exist/);

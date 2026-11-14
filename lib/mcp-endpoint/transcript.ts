@@ -50,7 +50,7 @@ export interface EntryLike {
   readonly parentId: string | null;
   readonly type: string;
   readonly timestamp: string;
-  readonly message?: { readonly role?: string; readonly timestamp?: number };
+  readonly message?: { readonly role?: string; readonly content?: unknown };
   readonly display?: boolean;
   readonly summary?: string;
 }
