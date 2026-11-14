@@ -1,14 +1,5 @@
-// The slice of MCP this endpoint speaks, hand-written: JSON-RPC 2.0 parsing, protocol version
-// negotiation, `initialize`, `ping`, `tools/list`, `tools/call`, and the tool-definition plumbing
-// (a JSON Schema subset that is both what `tools/list` publishes and what `tools/call` enforces).
-// Knows nothing about pi.
-//
-// Deliberately absent: Mcp-Session-Id, SSE, resumability, server->client requests, progress,
-// resources, prompts, logging, completions. Each tool call is bounded well under any proxy
-// timeout instead (desk.ts).
-
-/** Newest first. initialize echoes a requested one it knows, else offers the newest. */
-export const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"] as const;
+export const LATEST_PROTOCOL_VERSION = "2025-11-25";
+export const PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26"] as const;
 export type ProtocolVersion = (typeof PROTOCOL_VERSIONS)[number];
 /** The spec: a request without MCP-Protocol-Version is 2025-03-26. */
 export const HEADERLESS_VERSION: ProtocolVersion = "2025-03-26";
@@ -18,16 +9,14 @@ function isProtocolVersion(value: unknown): value is ProtocolVersion {
 }
 
 export function negotiateVersion(requested: unknown): ProtocolVersion {
-  return isProtocolVersion(requested) ? requested : PROTOCOL_VERSIONS[0];
+  return isProtocolVersion(requested) ? requested : LATEST_PROTOCOL_VERSION;
 }
 
 export type JsonRpcId = string | number;
 
-/** A client message, parsed. Wire objects never travel past this module. */
 export type ClientMessage =
   | { readonly kind: "request"; readonly id: JsonRpcId; readonly method: string; readonly params: unknown }
   | { readonly kind: "notification"; readonly method: string; readonly params: unknown }
-  /** A reply to a server request. This server sends none, so it is accepted and dropped. */
   | { readonly kind: "response" }
   | { readonly kind: "invalid"; readonly id: JsonRpcId | null };
 
@@ -62,11 +51,7 @@ function classify(value: unknown): ClientMessage {
   return { kind: "invalid", id: isRpcId(message.id) ? message.id : null };
 }
 
-/**
- * One message or a batch. 2025-03-26 clients may batch, and that revision says a server MUST
- * accept batches; later revisions dropped batching, so accepting it costs nothing.
- * Invalid JSON -> -32700; an empty batch or a single non-message -> -32600 (both HTTP 400).
- */
+/** 2025-03-26 clients may batch, and that revision says a server MUST accept batches; later revisions dropped batching. */
 export function parseBody(text: string): ParsedBody {
   let value: unknown;
   try {
@@ -83,11 +68,6 @@ export function parseBody(text: string): ParsedBody {
   return { ok: true, batch: false, messages: [message] };
 }
 
-/**
- * The MCP-Protocol-Version header. Absent: HEADERLESS_VERSION. A body of `initialize` requests
- * only is exempt (its version is negotiated in params). Unsupported: HTTP 400 with a JSON-RPC
- * error echoing the request id, naming the versions this server speaks.
- */
 export function headerVersion(
   header: string | null,
   messages: readonly ClientMessage[],
@@ -105,7 +85,6 @@ export function headerVersion(
   };
 }
 
-/** 202 with no body when nothing in it was a request; else one object, or an array for a batch. */
 export function httpReply(
   parsed: { readonly batch: boolean },
   responses: readonly (JsonRpcResponse | null)[],
@@ -115,7 +94,6 @@ export function httpReply(
   return { status: 200, body: parsed.batch ? answered : answered[0] };
 }
 
-/** The JSON Schema subset tools may declare. validateArgs() enforces exactly these keywords. */
 export type ArgSchema =
   | { readonly type: "string"; readonly minLength?: 1; readonly maxLength?: number; readonly enum?: readonly string[]; readonly default?: string; readonly description?: string }
   | { readonly type: "integer"; readonly minimum?: number; readonly maximum?: number; readonly default?: number; readonly description?: string }
@@ -139,11 +117,6 @@ type ValueOf<S extends ArgSchema> =
 type RequiredKey<S extends InputSchema> = S["required"] extends readonly (infer R)[] ? R & keyof S["properties"] : never;
 type DefaultedKey<S extends InputSchema> = { [K in keyof S["properties"]]: S["properties"][K] extends { default: unknown } ? K : never }[keyof S["properties"]];
 
-/**
- * The arguments a tool's `run` receives, derived from its schema: required and defaulted
- * properties are present, the rest optional. A schema edit changes the type `run` compiles
- * against, so the published schema and the code that reads it cannot drift apart.
- */
 export type ArgsOf<S extends InputSchema> =
   { readonly [K in RequiredKey<S> | DefaultedKey<S>]: ValueOf<S["properties"][K]> } &
   { readonly [K in Exclude<keyof S["properties"], RequiredKey<S> | DefaultedKey<S>>]?: ValueOf<S["properties"][K]> };
@@ -155,13 +128,11 @@ export interface ToolAnnotations {
   readonly openWorldHint?: boolean;
 }
 
-/** Per call: the abort signal (client gone or pi-web stopping) and the link base for this client. */
 export interface CallContext {
   readonly signal: AbortSignal;
   readonly linkBase: string;
 }
 
-/** Text for the model. isError marks a failed operation (not a protocol error). */
 export interface ToolText {
   readonly text: string;
   readonly isError?: boolean;
@@ -176,7 +147,6 @@ export interface ToolSpec<S extends InputSchema = InputSchema> {
   run(args: ArgsOf<S>, call: CallContext): Promise<ToolText>;
 }
 
-/** Keeps the literal schema type so `run`'s args are checked against it. */
 export function defineTool<const S extends InputSchema>(spec: ToolSpec<S>): ToolSpec<S> {
   return spec;
 }
@@ -212,10 +182,6 @@ function checkArg(name: string, schema: ArgSchema, value: unknown): string | nul
   }
 }
 
-/**
- * Applies defaults and checks: object shape, unknown keys (additionalProperties false), required,
- * type, enum, minLength/maxLength, minimum/maximum. Errors name the argument and what it must be.
- */
 export function validateArgs<S extends InputSchema>(
   schema: S,
   args: unknown,
@@ -303,12 +269,6 @@ const REQUEST_HANDLERS: Readonly<Record<string, RequestHandler>> = {
   "tools/call": (server, request, { call }) => callTool(server, request.id, request.params, call),
 };
 
-/**
- * One client message -> its response, or null for anything that gets none (notifications,
- * responses). `notifications/cancelled` is ignored: with no MCP session its requestId names
- * nothing unambiguous across clients; a client that gives up drops the HTTP request, which
- * aborts call.signal instead.
- */
 export async function dispatch(
   server: McpServerDefinition,
   message: ClientMessage,

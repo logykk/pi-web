@@ -1,9 +1,3 @@
-// pi-web's MCP endpoint (fork only): Streamable HTTP in JSON response mode, inside the server
-// process that hosts pi. Every POST is answered with one plain `application/json` body, or 202
-// for notifications only. No Mcp-Session-Id, no SSE, no GET stream: nothing here outlives a
-// bounded tool call. proxy.ts does not match /mcp, so this route guards itself
-// (lib/mcp-endpoint/http.ts), as app/api/web-auth/route.ts does. Notes: docs/agents/mcp-endpoint.md.
-
 import { dispatch, headerVersion, httpReply, parseBody, rpcError, RPC } from "@/lib/mcp-endpoint/jsonrpc";
 import { guardMcpRequest, jsonResponse, linkBaseFor, MAX_BODY_BYTES, readBoundedBody, shutdownSignal } from "@/lib/mcp-endpoint/http";
 import { mcpServer } from "@/lib/mcp-endpoint/tools";
@@ -22,8 +16,6 @@ export async function POST(request: Request): Promise<Response> {
   const parsed = parseBody(text);
   if (!parsed.ok) return jsonResponse(400, parsed.error);
 
-  // Claude Code's first probe (`server/discover`) names a newer revision in this header; the 400
-  // is its signal to fall back to the initialize handshake.
   const version = headerVersion(request.headers.get("mcp-protocol-version"), parsed.messages);
   if (!version.ok) return jsonResponse(400, version.response);
 

@@ -1,11 +1,3 @@
-// The eight tools an agent sees, and how each turns a desk result into text for the model. Each
-// tool's schema is its contract twice over: tools/list publishes it and validateArgs enforces
-// it, and ArgsOf<> derives `run`'s argument type from it (jsonrpc.ts).
-//
-// Every reply that can carry news ends with one line `cursor: <cursor>`; the instructions and the
-// descriptions tell the agent to pass the newest one back. Errors the agent can act on are
-// isError results with a sentence that says what to do.
-
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import packageJson from "../../package.json";
 import { sessionDeepLink } from "../session-links";
@@ -205,7 +197,6 @@ export function mcpServer(): McpServerDefinition {
   return definition;
 }
 
-/** A DeskError is the agent's to act on: its message becomes an isError result. Anything else is a bug for dispatch() to log. */
 async function guarded(run: () => Promise<ToolText>): Promise<ToolText> {
   try {
     return await run();
@@ -245,7 +236,6 @@ function headingLine(session: SessionHeading): string {
   return `Session ${session.id}${title} in ${session.cwd}${session.branch ? ` (branch ${session.branch})` : ""}.`;
 }
 
-/** "pi is working: bash `npm test` for 31 s." and the like, plus what is queued. */
 function statusLine(status: SessionStatus): string {
   const state = !status.loaded ? "pi is idle (the session is not loaded)."
     : status.running && status.dialogs.length > 0 ? "pi is waiting for an answer."
@@ -260,7 +250,6 @@ function statusLine(status: SessionStatus): string {
   return queued.length ? `${state} Queued: ${queued.join(", ")}.` : state;
 }
 
-/** Each open dialog with the exact call that answers it. A panel shows its last lines and is the person's. */
 function dialogLines(id: string, dialogs: readonly Dialog[]): string[] {
   return dialogs.flatMap((dialog) => {
     const call = (example: string, takes: string) =>

@@ -1,21 +1,9 @@
-// The read side of co-driving, as pure functions: the cursor an agent carries from reply to
-// reply, what is new on the session's current branch since it, who wrote each user message, and
-// the text the agent reads.
-//
-// The cursor is the agent's whole read state. The server keeps none per agent, so a reply lost
-// to a dropped connection or a 524 costs nothing: the agent repeats the call with the same cursor
-// and gets the same news. Entry ids live in the session file, so a cursor also survives pi-web
-// restarts and wrapper replacement.
-
 import { createHash } from "node:crypto";
 import type { AgentMessage, ToolResultMessage } from "../types";
 
 export interface Cursor {
-  /** The leaf of the branch when the reply was composed; null when the session had no entries. */
   readonly entryId: string | null;
-  /** dialogDigest() of the blocking dialogs the reply showed ("0": none). */
   readonly dialogs: string;
-  /** Server clock (ms) when the reply was composed: delivery news after it is new to this cursor. */
   readonly at: number;
 }
 
@@ -23,12 +11,10 @@ const ENTRY_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const DIGEST = /^(0|[0-9a-f]{8})$/;
 const BASE36 = /^[0-9a-z]{1,12}$/;
 
-/** `<entryId|->~<digest>~<at base36>`, e.g. `5e1d77a0~0~mhz3k2q1`. Opaque to the agent. */
 export function encodeCursor(cursor: Cursor): string {
   return `${cursor.entryId ?? "-"}~${cursor.dialogs}~${cursor.at.toString(36)}`;
 }
 
-/** Null for anything encodeCursor() did not produce. */
 export function decodeCursor(text: string): Cursor | null {
   const parts = text.trim().split("~");
   if (parts.length !== 3) return null;
@@ -38,13 +24,13 @@ export function decodeCursor(text: string): Cursor | null {
   return { entryId: entryId === "-" ? null : entryId, dialogs, at: parseInt(at, 36) };
 }
 
-/** "0" for none; else the first 8 hex of sha1 over the sorted ids. Order-independent. */
+export const NO_DIALOGS = "0";
+
 export function dialogDigest(openDialogIds: readonly string[]): string {
-  if (openDialogIds.length === 0) return "0";
+  if (openDialogIds.length === 0) return NO_DIALOGS;
   return createHash("sha1").update([...openDialogIds].sort().join("\n")).digest("hex").slice(0, 8);
 }
 
-/** The fields of a pi session entry this module reads (the SDK's SessionEntry is structurally one). */
 export interface EntryLike {
   readonly id: string;
   readonly parentId: string | null;
@@ -55,20 +41,11 @@ export interface EntryLike {
   readonly summary?: string;
 }
 
-/** SessionManager's O(1) reads: the live wrapper's in-memory one, or the cached file one. */
 export interface BranchReader {
   getLeafId(): string | null;
   getEntry(id: string): EntryLike | undefined;
 }
 
-/**
- * The current branch after a cursor, oldest first, capped to the newest `maxEntries`.
- *  since:   the cursor's entry is on the branch (or null: the whole branch is new).
- *  moved:   the cursor's entry is on another branch ("Edit from here" or a branch switch in
- *           pi-web); entries run from the fork point, the deepest common ancestor.
- *  unknown: the cursor's entry is not in this session; entries are the newest ones.
- * `visible` counts the new entries that render; `omitted` counts the ones the cap cut.
- */
 export interface Delta {
   readonly kind: "since" | "moved" | "unknown";
   readonly leafId: string | null;
@@ -77,7 +54,6 @@ export interface Delta {
   readonly omitted: number;
 }
 
-/** What the chat renders: messages other than transcript system messages, compactions, branch summaries, shown custom messages. */
 export function isVisibleEntry(entry: EntryLike): boolean {
   switch (entry.type) {
     case "message":
@@ -93,7 +69,6 @@ export function isVisibleEntry(entry: EntryLike): boolean {
   }
 }
 
-/** Iterative: a linear session's chain is as long as the session. */
 function chainFrom(reader: BranchReader, id: string | null, stopAt: (entry: EntryLike) => boolean): { chain: EntryLike[]; stop: EntryLike | null } {
   const chain: EntryLike[] = [];
   for (let entry = id ? reader.getEntry(id) : undefined; entry; entry = entry.parentId ? reader.getEntry(entry.parentId) : undefined) {
@@ -117,12 +92,6 @@ export function branchSince(reader: BranchReader, cursorEntryId: string | null, 
   return delta("moved", chainFrom(reader, leafId, (entry) => cursorAncestors.has(entry.id)).chain);
 }
 
-/**
- * Who wrote a rendered message. pi records no author, so a user message is:
- *  agent:  sent through this endpoint (the ledger recorded it and it landed as this entry);
- *  person: not sent through it, and newer than the ledger (pi-web's web UI or the pi CLI);
- *  user:   older than this process's ledger, so unknown.
- */
 export type Author = "agent" | "person" | "user" | "pi" | "shell" | "extension" | "summary";
 
 export function authorOf(
@@ -145,7 +114,6 @@ export function authorOf(
   }
 }
 
-/** The plain text of message content: a string, or its text blocks (images as "[image]"). */
 export function contentText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -155,14 +123,8 @@ export function contentText(content: unknown): string {
     .join("\n");
 }
 
-/** How far a user entry may predate the send it landed for (clock skew between the two writers). */
 const LANDING_SKEW_MS = 2_000;
 
-/**
- * Pairs the agent's unlanded sends with user entries, oldest first, each at most once: same
- * trimmed text, entry time >= sentAt - 2 s. Known miss: a `/command` pi expands lands with other
- * text and stays unlanded (and reads as the person's).
- */
 export function matchLandings(
   sends: readonly { readonly id: string; readonly text: string; readonly sentAt: number }[],
   userEntries: readonly { readonly entryId: string; readonly text: string; readonly time: number }[],
@@ -191,13 +153,11 @@ export interface RenderBudget {
   readonly toolResult: number;
 }
 
-/** report: pi_wait / pi_send replies; read: pi_read, with longer tool output. */
 export const BUDGETS: Readonly<Record<"report" | "read", RenderBudget>> = {
   report: { total: 12_000, userText: 2_000, assistantText: 3_000, lastAssistantText: 8_000, toolArgs: 160, toolResult: 160 },
   read: { total: 40_000, userText: 8_000, assistantText: 8_000, lastAssistantText: 16_000, toolArgs: 2_000, toolResult: 2_000 },
 };
 
-/** Results up to this budget show their first line; longer budgets show the text itself. */
 const FIRST_LINE_BUDGET = 400;
 
 function clip(text: string, max: number): string {
@@ -218,13 +178,6 @@ function resultLine(result: ToolResultMessage | undefined, budget: RenderBudget,
   return `${result.isError ? "error" : "ok"}: ${summarize(contentText(result.content), budget.toolResult)}`;
 }
 
-/**
- * One block per message, prefixed `[agent]`, `[person]`, `[user]`, `[pi]`, `[shell]`,
- * `[extension <type>]` or `[summary]`. Tool calls are indented under their reply with their
- * result ("running" when `endsAtNewest` and none came yet); thinking is left out. `(stopped)` and
- * `(error: …)` flag aborted and failed replies. Past `total`, the oldest blocks go and the first
- * line says how many.
- */
 export function renderMessages(
   messages: readonly AgentMessage[],
   authors: readonly Author[],

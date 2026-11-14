@@ -1,9 +1,3 @@
-// The seam to pi-web's internals. Everything the MCP endpoint needs from upstream code goes
-// through PiWebPorts, and piWebPorts() is the only place that imports rpc-manager,
-// session-reader, worktree and friends. A rebase that reshapes one of them breaks this file's
-// typecheck (or ports.integration.test.mjs) and nothing else; desk.ts is written against these
-// interfaces and tested with fakes. pi-web's command vocabulary stays private here.
-
 import { randomUUID } from "node:crypto";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { allowFileRoot } from "../file-access";
@@ -24,20 +18,14 @@ import type { AgentMessage, ExtensionUiResponse, SessionEntry } from "../types";
 import { addWorktree, resolveProject, WorktreeBranchInUseError } from "../worktree";
 import type { BranchReader, EntryLike } from "./transcript";
 
-/** An event as the wrapper fans it out (unprojected; the SSE route's projection is not used). */
 export type PiEvent = AgentEvent;
 
-/** A session's transcript, read-only: the live wrapper's in-memory SessionManager or the cached file one. */
 export interface TranscriptSource extends BranchReader {
   getEntries(): readonly EntryLike[];
   getSessionName(): string | undefined;
   getCwd(): string;
 }
 
-/**
- * A live pi session, as the endpoint uses it. Adapts one AgentSessionWrapper; `isAlive()` false
- * means it was shut down or replaced, and the caller re-resolves through PiWebPorts.live().
- */
 export interface LiveSession {
   readonly id: string;
   isAlive(): boolean;
@@ -60,7 +48,6 @@ export interface LiveSession {
   abort(): Promise<{ steering: string[]; followUp: string[] }>;
   /** The first answer from any client wins; later ones are dropped silently. */
   answer(response: ExtensionUiResponse): Promise<void>;
-  /** pi's queue. Prompts parked behind a compaction are not included. */
   queued(): { steering: readonly string[]; followUp: readonly string[] };
   transcript(): TranscriptSource;
   model(): string | null;
@@ -89,32 +76,21 @@ export type WorktreeOutcome =
   | { readonly kind: "held-by-missing"; readonly path: string; readonly branch: string };
 
 export interface PiWebPorts {
-  /** The live session, or null. Never starts one. */
   live(id: string): LiveSession | null;
-  /** The live session, else started from its file (extensions load: seconds); null when there is no such session. */
   open(id: string): Promise<LiveSession | null>;
-  /** A brand-new session in `cwd`, published the way /api/agent/new publishes it. */
   create(cwd: string, options: NewSessionOptions): Promise<LiveSession>;
-  /** The saved transcript; null when there is no such session file. */
   saved(id: string): Promise<TranscriptSource | null>;
-  /** Display messages of exactly these entries, with parallel entry ids. */
   toMessages(entries: readonly EntryLike[], sessionId: string): { messages: AgentMessage[]; entryIds: string[] };
-  /** A history page: the `tail` user and pi messages ending at `endId` (before it when `before`). */
   page(source: TranscriptSource, sessionId: string, endId: string | null, tail: number, before: boolean):
     { messages: AgentMessage[]; entryIds: string[]; hasMore: boolean; oldestEntryId: string | null };
-  /** The sidebar's list, newest first: saved and live-only rows, subagents and side chats left out. */
   listSessions(): Promise<SessionRow[]>;
   subagentsActive(id: string): boolean;
   project(cwd: string): Promise<{ branch: string | null; isWorktree: boolean }>;
-  /** The folder has project resources that stay off until the person trusts it in pi-web. */
   untrusted(cwd: string): boolean;
-  /** Keeps the session from being reaped for HOLD_MS after the last touch, across wrapper replacement. */
   hold(id: string): void;
-  /** addWorktree, joined when the same (dir, branch) is already being checked out. */
   addWorktree(dir: string, branch: string): Promise<WorktreeOutcome>;
 }
 
-/** Covers an agent away doing its own work between calls; the idle timer is 10 min. */
 export const HOLD_MS = 30 * 60_000;
 const HOLD_PROVIDER_NAME = "pi-web-mcp-endpoint";
 
@@ -161,7 +137,6 @@ export function piWebPorts(): PiWebPorts {
 
     async saved(id) {
       const path = await resolveSessionPath(id);
-      // Never a forced read: it can evict an idle wrapper.
       return path ? openSessionManager(path) : null;
     },
 
@@ -179,7 +154,6 @@ export function piWebPorts(): PiWebPorts {
     },
 
     async listSessions() {
-      // app/api/sessions/route.ts's join, copied: extracting it would edit an upstream route.
       const [saved, live] = await Promise.all([listAllSessions(), attachSessionProjectInfo(getRpcSessionInfos())]);
       const running = new Set(getRunningRpcSessionIds());
       const waiting = new Set(getAwaitingInputRpcSessionIds());
@@ -221,9 +195,6 @@ export function piWebPorts(): PiWebPorts {
         existing.touchedAt = now;
         return;
       }
-      // A liveness provider, not renewIdleTimer(): it spans gaps longer than the idle timeout, it
-      // is keyed by session id so it holds whatever wrapper replaces this one, Stop's forced
-      // shutdown still overrides it, and the Debug panel lists it by name.
       const hold = { touchedAt: now, dispose: () => {} };
       hold.dispose = registerSessionLivenessProvider({
         name: HOLD_PROVIDER_NAME,

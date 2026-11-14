@@ -1,49 +1,27 @@
-// What an agent can do in pi sessions, in co-driving terms, behind one small object. Every
-// operation returns within a bound and returns domain results; tools.ts turns them into text.
-// Written against ports.ts and the ledger only, so the wait loop, wrapper replacement and
-// delivery bookkeeping are tested with fakes.
-//
-// Invariants:
-//  - Every prompt carries streamingBehavior (LiveSession.prompt cannot send without one): one
-//    request shape for an idle and a busy session, so the agent never gets "Agent is already
-//    processing".
-//  - Reads never start a wrapper (pi_read, pi_wait, pi_sessions).
-//  - The agent's read position lives only in its cursor. Nothing here advances on its behalf.
-//  - Engaging a session (send, wait, answer, stop, create) holds it (ports.hold).
-
 import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, sep } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { SESSION_ID_PATTERN } from "../session-ui-state-shared";
 import type { ToolPreset } from "../tool-presets";
 import type { AgentMessage, ExtensionUiRequest, ExtensionUiResponse } from "../types";
 import type { LiveSession, PiEvent, PiWebPorts, SessionRow, TranscriptSource, WorktreeOutcome } from "./ports";
 import { recheckIn, stepRest, type RestPhase, type RestReason } from "./rest";
 import { deliveryNews, reconcileFates, sendsInFlight, type Delivery, type Ledger, type SentMessage } from "./session-ledger";
-import { authorOf, branchSince, contentText, dialogDigest, matchLandings, type Author, type Cursor, type Delta, type EntryLike } from "./transcript";
+import { authorOf, branchSince, contentText, dialogDigest, matchLandings, NO_DIALOGS, type Author, type Cursor, type Delta, type EntryLike } from "./transcript";
 
-/** Longest wait a call may ask for: the generic MCP SDK client gives up at 60 s, nginx too, Cloudflare at 100 s. */
+/** The generic MCP SDK client gives up at 60 s, nginx too, Cloudflare at 100 s. */
 export const WAIT_MAX_MS = 50_000;
 export const WAIT_DEFAULT_MS = 45_000;
-/** How long pi_send waits for pi to take a message (cold start, extension binding, MCP servers). */
 export const SEND_ACCEPT_MS = 15_000;
-/** How long pi_new_session waits for the session to be built; with SEND_ACCEPT_MS after it, the call stays under WAIT_MAX_MS. */
-export const CREATE_MS = 30_000;
-/** How long pi_new_worktree waits for git before answering "still checking out". */
+export const CREATE_MS = WAIT_MAX_MS - SEND_ACCEPT_MS - 5_000;
 export const WORKTREE_MS = 45_000;
-/** How long pi_stop waits for the run to unwind (a tool that ignores its abort signal can hold it). */
 export const STOP_MS = 20_000;
-/** How long pi_stop lets the agent's own send on its way land first: aborting before it lands hits nothing, and the prompt would run. */
 export const STOP_SEND_GRACE_MS = 5_000;
-/** Most entries one wait reports; past it the reply says how many it left to pi_read. */
 export const MAX_DELTA_ENTRIES = 400;
 
 export type SessionId = string & { readonly __brand: "SessionId" };
 
-/** pi-web's session ids, as its session reader accepts them. */
-const SESSION_ID = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
-
-/** A session id, or a pi-web link holding `?session=<id>`. */
 export function parseSessionRef(input: string): SessionId | null {
   const text = input.trim();
   let id = text;
@@ -54,10 +32,9 @@ export function parseSessionRef(input: string): SessionId | null {
       return null;
     }
   }
-  return id.length <= 200 && SESSION_ID.test(id) ? id as SessionId : null;
+  return id.length <= 200 && SESSION_ID_PATTERN.test(id) ? id as SessionId : null;
 }
 
-/** A blocking extension dialog, as the agent can answer it (a panel only the person can). */
 export type Dialog =
   | { readonly id: string; readonly kind: "choice"; readonly title: string; readonly options: readonly string[] }
   | { readonly id: string; readonly kind: "confirm"; readonly title: string; readonly message: string }
@@ -65,14 +42,12 @@ export type Dialog =
   | { readonly id: string; readonly kind: "panel"; readonly lines: readonly string[] };
 
 export interface SessionStatus {
-  /** A live wrapper exists. False: idle and not loaded (nothing can be running). */
   readonly loaded: boolean;
   readonly running: boolean;
   readonly subagentsActive: boolean;
   readonly sendsInFlight: number;
   readonly dialogs: readonly Dialog[];
   readonly queued: { readonly steering: readonly string[]; readonly followUp: readonly string[] };
-  /** The newest running tool and how long it has run, e.g. "bash `npm test` for 31 s". */
   readonly activity: string | null;
 }
 
@@ -83,7 +58,6 @@ export interface SessionHeading {
   readonly branch: string | null;
 }
 
-/** Messages with their authors, ready for renderMessages(). */
 export interface LabeledMessages {
   readonly messages: readonly AgentMessage[];
   readonly authors: readonly Author[];
@@ -93,14 +67,12 @@ export interface ReadResult {
   readonly session: SessionHeading;
   readonly status: SessionStatus;
   readonly page: LabeledMessages & { readonly hasMore: boolean; readonly oldestEntryId: string | null };
-  /** Null for a `before` page: the agent keeps the cursor it has. */
   readonly cursor: Cursor | null;
 }
 
 export interface SendResult {
   readonly send: SentMessage;
   readonly status: SessionStatus;
-  /** The caller's cursor, or the leaf before this message: the next wait shows it landing. */
   readonly cursor: Cursor;
 }
 
@@ -109,9 +81,7 @@ export interface WaitResult {
   readonly waitedMs: number;
   readonly status: SessionStatus;
   readonly delta: Pick<Delta, "kind" | "omitted"> & LabeledMessages;
-  /** The agent's sends with news since the cursor (late refusal, withdrawn by Stop or Recall). */
   readonly news: readonly SentMessage[];
-  /** prompt_error / extension_error texts seen during this wait. */
   readonly notices: readonly string[];
   readonly cursor: Cursor;
 }
@@ -119,18 +89,13 @@ export interface WaitResult {
 export type DialogAnswer = { readonly cancel: true } | { readonly value: string | number | boolean };
 
 export type AnswerResult =
-  /** Delivered while open (the person may still have answered first). */
   | { readonly outcome: "sent"; readonly dialog: Dialog; readonly shown: string }
-  /** Already answered or closed. */
   | { readonly outcome: "closed" };
 
 export interface StopResult {
   readonly stopped: boolean;
-  /** Stop was sent, but the run had not unwound within STOP_MS. */
   readonly unwinding: boolean;
-  /** Our own send was still on its way after STOP_SEND_GRACE_MS, so nothing was stopped. */
   readonly sendPending: boolean;
-  /** What Stop withdrew from pi's queue. It goes to the agent, not back to the person's composer. */
   readonly withdrawn: readonly { readonly text: string; readonly author: "agent" | "person" }[];
   readonly status: SessionStatus;
 }
@@ -202,7 +167,6 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     };
   }
 
-  /** A watch attached and closed at once: the replay alone gives the open dialogs and running tools. */
   function snapshotStatus(id: string): SessionStatus {
     const watch = new SessionWatch(ports, id, clock);
     try {
@@ -218,14 +182,8 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     return found;
   }
 
-  /**
-   * Lands the agent's sends on user entries (over all entries since the oldest unlanded send, not
-   * just a delta: the agent's cursor may be past the landing), and with an observation of pi at
-   * rest, records the accepted ones that left pi's queue without landing. Writes are monotonic.
-   */
   function reconcile(id: string, transcript: TranscriptSource, observed: { status: SessionStatus; now: number } | null): void {
     const sends = ledger.forSession(id);
-    // A send already found missing is not matched any more: a later entry with its text is the person's.
     const unlanded = sends.filter((send) => send.landedEntryId === null && send.missingSince === null && send.outcome.state !== "refused");
     if (unlanded.length === 0) return;
     const landedIds = new Set(sends.map((send) => send.landedEntryId));
@@ -261,7 +219,6 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     return { id, title, cwd, branch: project.branch };
   }
 
-  /** The one path pi_send and pi_new_session share. */
   async function deliver(id: string, text: string, delivery: Delivery, cursor: Cursor, signal: AbortSignal): Promise<SendResult> {
     const record = ledger.record(id, text, delivery);
     const outcome = (async () => {
@@ -273,8 +230,6 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
         ? { state: "parked" as const, at: clock.now() }
         : { state: "accepted" as const, disposition: wasRunning ? "queued" as const : "started" as const, at: clock.now() };
     })();
-    // Not tied to `signal`: once handed to pi-web the message is pi's. A cancelled call can
-    // still deliver, and the next wait shows it land (or its refusal as news).
     const settled = outcome.then(
       (accepted) => ledger.settle(record.id, accepted),
       (error: unknown) => ledger.settle(record.id, { state: "refused", reason: errorText(error), at: clock.now() }),
@@ -304,7 +259,6 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
         session: await heading(id, transcript),
         status,
         page: { ...label(id, transcript, page), hasMore: page.hasMore, oldestEntryId: page.oldestEntryId },
-        // The reply shows the open dialogs, so its cursor counts them as shown.
         cursor: before !== undefined ? null : { entryId: transcript.getLeafId(), dialogs: dialogDigest(status.dialogs.map((dialog) => dialog.id)), at: clock.now() },
       };
     },
@@ -312,8 +266,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     async send(id, text, { steer, cursor }, signal) {
       const transcript = await source(id, ports.live(id));
       ports.hold(id);
-      // dialogs "0": the agent was shown none, so its next wait reports any open one.
-      const from = cursor ?? { entryId: transcript.getLeafId(), dialogs: "0", at: clock.now() };
+      const from = cursor ?? { entryId: transcript.getLeafId(), dialogs: NO_DIALOGS, at: clock.now() };
       return deliver(id, text, steer ? "steer" : "followUp", from, signal);
     },
 
@@ -338,7 +291,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
             now, deadline, aborted: signal.aborted,
             running: status.running, subagentsActive: status.subagentsActive, sendsInFlight: status.sendsInFlight,
             hasNews: delta.visible > 0 || delta.kind !== "since" || news.length > 0,
-            dialogs, dialogCount: status.dialogs.length, cursorDialogs: cursor.dialogs,
+            dialogs, dialogCount: status.dialogs.length, shownDialogs: cursor.dialogs,
           });
           if (phase.kind === "done") {
             const converted = ports.toMessages(delta.entries, id);
@@ -349,7 +302,6 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
               delta: { kind: delta.kind, omitted: delta.omitted, ...label(id, transcript, converted) },
               news,
               notices: [...watch.notices],
-              // The progress so far comes with a new cursor even on a timeout, so the agent can steer mid-run.
               cursor: { entryId: delta.leafId, dialogs, at: now },
             };
           }
@@ -387,7 +339,6 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       }
       if (sendsInFlight(ledger.forSession(id)) > 0) return { ...idle(snapshotStatus(id)), sendPending: true };
       const before = snapshotStatus(id);
-      // An abort on an idle session would stop nothing.
       if (!live.isRunning() && before.dialogs.length === 0) return idle(before);
       const withdrawn = await within(live.abort(), STOP_MS, NEVER);
       if (!withdrawn) return { stopped: true, unwinding: true, sendPending: false, withdrawn: [], status: snapshotStatus(id) };
@@ -424,7 +375,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       if (!session) throw new DeskError("unavailable", `pi-web was still building the session after ${CREATE_MS / 1000} s; nothing was sent. Try again.`);
       ports.hold(session.id);
       const transcript = session.transcript();
-      const send = await deliver(session.id, message, "followUp", { entryId: transcript.getLeafId(), dialogs: "0", at: clock.now() }, signal);
+      const send = await deliver(session.id, message, "followUp", { entryId: transcript.getLeafId(), dialogs: NO_DIALOGS, at: clock.now() }, signal);
       return {
         session: await heading(session.id as SessionId, transcript),
         model: session.model(),
@@ -445,19 +396,8 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
   };
 }
 
-/** Events that only stream text: they change no rest observation. */
-const HIGH_RATE = new Set(["message_update", "tool_execution_update", "bash_output"]);
+const STREAMING_ONLY_EVENTS = new Set(["message_update", "tool_execution_update", "bash_output"]);
 
-/**
- * Wakes a waiter on anything that can change a rest observation, across wrapper replacement.
- *
- * Attaches to the live wrapper, if any. The synchronous replay inside onEvent() is state (open
- * dialogs, running tools), not news, so it seeds them without waking. `session_shutdown` or
- * `session_ended` detaches: the next live() re-resolves through ports.live(), which finds the
- * replacement a fork, trust change, idle reap or tool rebuild registered under the same id. With
- * no live wrapper, changed() still returns every tick, so a wrapper the person's page starts is
- * picked up. A wait never starts one.
- */
 class SessionWatch {
   private session: LiveSession | null = null;
   private off: (() => void) | null = null;
@@ -486,7 +426,6 @@ class SessionWatch {
     return `${newest.name}${newest.detail ? ` ${newest.detail}` : ""} for ${Math.max(0, Math.round((now - newest.startedAt) / 1000))} s`;
   }
 
-  /** Resolves on the next waking event (or one since the last call), after `ms`, or on abort. Never rejects. */
   changed(ms: number, signal: AbortSignal): Promise<void> {
     if (this.dirty || signal.aborted) {
       this.dirty = false;
@@ -518,7 +457,6 @@ class SessionWatch {
     let endedDuringReplay = false;
     const off = session.onEvent((event) => {
       if (event.type === "session_shutdown" || event.type === "session_ended") {
-        // In the replay it is state, not news: waking on it would re-attach to the ended wrapper at once, forever.
         if (replaying) endedDuringReplay = true;
         else {
           this.detach();
@@ -530,7 +468,7 @@ class SessionWatch {
       if (replaying) return;
       if (event.type === "prompt_error") this.notices.push(`pi reported an error: ${String(event.errorMessage)}`);
       if (event.type === "extension_error") this.notices.push(`Extension ${String(event.extensionPath)} failed: ${String(event.error)}`);
-      if (!HIGH_RATE.has(event.type)) this.poke();
+      if (!STREAMING_ONLY_EVENTS.has(event.type)) this.poke();
     });
     replaying = false;
     this.off = off;
@@ -581,7 +519,6 @@ class SessionWatch {
   }
 }
 
-/** The blocking dialogs (pi's TUI blocks on exactly these), as the agent sees them; null for everything else. */
 function toDialog(request: ExtensionUiRequest): Dialog | null {
   switch (request.method) {
     case "select":
@@ -601,7 +538,6 @@ function toDialog(request: ExtensionUiRequest): Dialog | null {
 
 const YES_NO: Readonly<Record<string, boolean>> = { yes: true, true: true, y: true, no: false, false: false, n: false };
 
-/** The response the dialog's kind takes, or a bad-input error naming what it takes. */
 function toResponse(dialog: Dialog, answer: DialogAnswer): { response: ExtensionUiResponse; shown: string } {
   if ("cancel" in answer) return { response: { type: "extension_ui_response", id: dialog.id, cancelled: true }, shown: "cancel" };
   const { value } = answer;
@@ -640,13 +576,6 @@ function toolDetail(args: unknown): string {
   return `\`${flat.length > 60 ? `${flat.slice(0, 59)}…` : flat}\``;
 }
 
-/**
- * The spelling pi-web already uses for a folder, so the agent's sessions group with the person's:
- * `~` expanded, absolute, an existing directory, then its realpath (the directory picker selects
- * the realpath, and pi's TUI uses the physical cwd). Any directory is allowed: the token is as
- * strong as the web password, and the web UI can open any folder too. The rule is one cwd per
- * folder, not containment.
- */
 export function canonicalDirectory(input: string): string {
   const trimmed = input.trim();
   const expanded = trimmed === "~" ? homedir() : trimmed.startsWith("~/") ? join(homedir(), trimmed.slice(2)) : trimmed;
@@ -665,7 +594,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** The promise's value, or null when `ms` pass or `signal` aborts first. The promise runs on either way. */
 async function within<T>(promise: Promise<T>, ms: number, signal: AbortSignal): Promise<T | null> {
   promise.catch(() => {});
   let timer: ReturnType<typeof setTimeout> | undefined;
