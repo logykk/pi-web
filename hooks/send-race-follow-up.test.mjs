@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
@@ -98,4 +99,9 @@ test("when the follow-up is refused too, the person gets the original refusal an
   assert.equal(result.prompts.length, 2, "one retry, no more");
   assert.deepEqual(result.notices, [["error", ALREADY_PROCESSING]]);
   assert.equal(result.draft, "person text");
+});
+
+test("pi still words its refusal the way handleSend matches it", async () => {
+  const sdk = await readFile(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js", import.meta.url), "utf8");
+  assert.ok(sdk.includes(`"${ALREADY_PROCESSING}"`), "pi reworded its refusal: update the match in handleSend and ALREADY_PROCESSING here");
 });
