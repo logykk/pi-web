@@ -102,5 +102,5 @@ No call keeps a response open longer than 50 seconds, so proxies with a 60-secon
 - It does not remove worktrees, and it never fetches: a new branch starts from the main checkout's `HEAD`, or from `origin/<branch>` when that was fetched already.
 - New sessions go in any existing folder on the machine, under the folder's real path.
 - A wrong token answers 401 and does not count toward the web login's lockout, so a stranger guessing tokens cannot lock you out of the web UI.
-- If you send in the browser in the second before your page learns that the agent started a run, Pi Web may refuse your message with "Agent is already processing". Your text stays in the composer; send it again.
+- If you send in the browser in the moment before your page learns that the agent started a run, pi refuses the plain send, and the page queues your message as a follow-up instead, as the Follow-up button would.
 - Labels live in memory. After Pi Web restarts, earlier messages read `[user]`. A slash command the agent sends that pi expands into other text reads `[person]`.

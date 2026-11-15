@@ -64,7 +64,7 @@ pi-web's own MCP server, for agents that work in pi sessions beside a person in 
 - `pi_answer` checks the dialog is still open (through the replay), maps the answer to its kind, and sends `extension_ui_response`. The first answer from any client wins; a `custom` panel takes keystrokes and stays the person's.
 
 ## Known limits
-- The person's page can still get "Agent is already processing" in the moment before it receives the agent's `agent_start`; the text returns to the composer. Closing it needs a `hooks/useAgentSession.ts` change, out of scope for this fork-only feature.
+- The person's page can send a plain prompt in the moment before it receives the agent's `agent_start`, and pi refuses it with "Agent is already processing". `handleSend` in `hooks/useAgentSession.ts` (a fork-only block, marked `Fork:`) resends that text once as a follow-up; `hooks/send-race-follow-up.test.mjs` covers it. The match is on pi's message text, so a pi upgrade that rewords it brings the refusal back: that test fails then.
 - `queued()` reads the SDK queue only, not prompts parked behind a manual compaction; a parked send's outcome is `parked`, never missing.
 - Internal behavior this depends on that no upstream test pins for it: the open dialogs in the `onEvent()` replay, the `abort` reply shape, `inner.getSteeringMessages()` / `getFollowUpMessages()`, and `buildSessionContext()`'s slice walk, each covered by `ports.integration.test.mjs`; also the running tool starts in the replay, which only feed the "working: bash `…` for N s" line and are not pinned.
 - Tests driving the wait loop use `t.mock.timers`: let pending microtasks run (`setImmediate`) before each `tick()`, or a timer scheduled after the first tick never fires inside the advanced span.
