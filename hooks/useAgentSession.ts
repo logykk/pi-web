@@ -2389,6 +2389,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         void waitForPromptSettlement(sentSessionId, promptRunId);
       }
     } catch (e) {
+      // Fork: another client (an MCP agent, another tab) started a run before this
+      // page heard of it. Queue the text behind that run, as Follow-up does.
+      if (sentSessionId && isPromptRejectedError(e) && e.message.startsWith("Agent is already processing")) {
+        rpcPromptPendingRef.current = false;
+        setMessages((prev) => withoutMessage(prev, userMsg));
+        optimisticUserMessageKeyRef.current = null;
+        try {
+          await sendAgentCommand(sentSessionId, { type: "prompt", message, streamingBehavior: "followUp", ...(piImages?.length ? { images: piImages } : {}) });
+          void reconcileAgentState(sentSessionId);
+          return;
+        } catch {
+          // Falls through: the person gets the original refusal and their text back.
+        }
+      }
       console.error("Failed to send message:", e);
       const definitivelyRejected = !promptRequestStarted || isPromptRejectedError(e);
       // A transport/proxy failure after dispatch is ambiguous: the server may
