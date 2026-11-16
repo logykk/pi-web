@@ -349,16 +349,9 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       const withdrawn = await within(live.abort(), STOP_MS, NEVER);
       if (!withdrawn) return { kind: "unwinding" };
       reconcile(id, live.transcript(), null);
-      const ours = ledger.forSession(id).filter((send) => send.outcome.state === "accepted" && send.placement.kind !== "landed");
-      const now = clock.now();
-      const labeled = [...withdrawn.steering, ...withdrawn.followUp].map((text) => {
-        const index = ours.findIndex((send) => send.text.trim() === text.trim());
-        if (index === -1) return { text, author: "person" as const };
-        ledger.markMissing(ours[index].id, now);
-        ours.splice(index, 1);
-        return { text, author: "agent" as const };
-      });
-      return { kind: "stopped", withdrawn: labeled, status: snapshotStatus(id) };
+      const texts = [...withdrawn.steering, ...withdrawn.followUp];
+      const authors = ledger.withdraw(id, texts, clock.now());
+      return { kind: "stopped", withdrawn: texts.map((text, index) => ({ text, author: authors[index] })), status: snapshotStatus(id) };
     },
 
     async newSession({ cwd, message, model, thinking, tools }, signal) {
