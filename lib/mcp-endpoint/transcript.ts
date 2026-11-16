@@ -76,16 +76,12 @@ export function branchSince(reader: BranchReader, cursorEntryId: string | null, 
 
 export type Author = "agent" | "person" | "user" | "pi" | "shell" | "extension" | "summary";
 
-export function authorOf(
-  message: AgentMessage,
-  entry: { readonly id: string; readonly type: string; readonly time: number },
-  landedEntryIds: ReadonlySet<string>,
-  ledgerSince: number,
-): Author {
-  if (entry.type === "branch_summary" || entry.type === "compaction") return "summary";
+/** `userAuthor`: who wrote a user message, which only the ledger knows. */
+export function authorOf(message: AgentMessage, entryType: string, userAuthor: () => Extract<Author, "agent" | "person" | "user">): Author {
+  if (entryType === "branch_summary" || entryType === "compaction") return "summary";
   switch (message.role) {
     case "user":
-      return landedEntryIds.has(entry.id) ? "agent" : entry.time >= ledgerSince ? "person" : "user";
+      return userAuthor();
     case "assistant":
     case "toolResult":
       return "pi";
@@ -103,27 +99,6 @@ export function contentText(content: unknown): string {
     .map((block: { type?: string; text?: string }) => block?.type === "text" ? block.text ?? "" : block?.type === "image" ? "[image]" : "")
     .filter(Boolean)
     .join("\n");
-}
-
-const LANDING_SKEW_MS = 2_000;
-
-export function matchLandings(
-  sends: readonly { readonly id: string; readonly text: string; readonly sentAt: number }[],
-  userEntries: readonly { readonly entryId: string; readonly text: string; readonly time: number }[],
-): { sendId: string; entryId: string }[] {
-  const used = new Set<string>();
-  const landings: { sendId: string; entryId: string }[] = [];
-  const entries = [...userEntries].sort((a, b) => a.time - b.time);
-  for (const send of [...sends].sort((a, b) => a.sentAt - b.sentAt)) {
-    const text = send.text.trim();
-    const entry = entries.find((candidate) => !used.has(candidate.entryId)
-      && candidate.time >= send.sentAt - LANDING_SKEW_MS
-      && candidate.text.trim() === text);
-    if (!entry) continue;
-    used.add(entry.entryId);
-    landings.push({ sendId: send.id, entryId: entry.entryId });
-  }
-  return landings;
 }
 
 export interface RenderBudget {

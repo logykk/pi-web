@@ -30,7 +30,6 @@ export interface UserEntry {
 }
 
 export interface Ledger {
-  readonly since: number;
   record(sessionId: string, text: string, delivery: Delivery): SentMessage;
   settle(sendId: string, outcome: Exclude<SendOutcome, { state: "sending" }>): void;
   /** pi_send replied now; a send still on its way is remembered as such. Returns the send as replied. */
@@ -48,11 +47,6 @@ export interface Ledger {
   /** Late refusals and missing sends after `at`, for every cursor older than the event. */
   news(sessionId: string, at: number): SentMessage[];
   inFlight(sessionId: string): number;
-  markRepliedWhileSending(sendId: string): void;
-  markLanded(sendId: string, entryId: string): void;
-  markMissing(sendId: string, at: number): void;
-  get(sendId: string): SentMessage | undefined;
-  forSession(sessionId: string): readonly SentMessage[];
 }
 
 const MAX_PER_SESSION = 200;
@@ -96,7 +90,6 @@ export function createLedger(now: () => number = Date.now): Ledger {
   const sendsOf = (sessionId: string) => bySession.get(sessionId) ?? [];
 
   return {
-    since,
     record(sessionId, text, delivery) {
       counter += 1;
       const record: Mutable<SentMessage> = {
@@ -162,25 +155,6 @@ export function createLedger(now: () => number = Date.now): Ledger {
     inFlight(sessionId) {
       return sendsOf(sessionId).filter((send) => send.outcome.state === "sending").length;
     },
-    markRepliedWhileSending(sendId) {
-      const record = byId.get(sendId);
-      if (record?.outcome.state === "sending") record.repliedWhileSending = true;
-    },
-    markLanded(sendId, entryId) {
-      const record = byId.get(sendId);
-      if (record?.placement.kind === "open") record.placement = { kind: "landed", entryId };
-    },
-    markMissing(sendId, at) {
-      const record = byId.get(sendId);
-      if (record?.placement.kind === "open") record.placement = { kind: "missing", since: at };
-    },
-    get(sendId) {
-      const record = byId.get(sendId);
-      return record ? { ...record } : undefined;
-    },
-    forSession(sessionId) {
-      return sendsOf(sessionId).map((record) => ({ ...record }));
-    },
   };
 }
 
@@ -190,39 +164,4 @@ const LEDGER = Symbol.for("pi-web.mcp-endpoint.ledger");
 export function ledger(): Ledger {
   const store = globalThis as unknown as Record<symbol, Ledger | undefined>;
   return store[LEDGER] ??= createLedger();
-}
-
-export function sendsInFlight(sends: readonly SentMessage[]): number {
-  return sends.filter((send) => send.outcome.state === "sending").length;
-}
-
-export function deliveryNews(sends: readonly SentMessage[], cursorAt: number): SentMessage[] {
-  return sends.filter((send) =>
-    (send.repliedWhileSending && send.outcome.state === "refused" && send.outcome.at > cursorAt)
-    || (send.placement.kind === "missing" && send.placement.since > cursorAt));
-}
-
-export function reconcileFates(
-  sends: readonly SentMessage[],
-  observed: {
-    readonly landings: readonly { readonly sendId: string; readonly entryId: string }[];
-    readonly queuedTexts: readonly string[];
-    readonly atRest: boolean;
-    readonly now: number;
-  },
-): { landed: { sendId: string; entryId: string }[]; missing: string[] } {
-  const unlanded = new Set(sends.filter((send) => send.placement.kind !== "landed").map((send) => send.id));
-  const landed = observed.landings.filter((landing) => unlanded.has(landing.sendId));
-  const landedNow = new Set(landed.map((landing) => landing.sendId));
-  const queued = new Set(observed.queuedTexts.map((text) => text.trim()));
-  const missing = !observed.atRest ? [] : sends
-    .filter((send) => send.outcome.state === "accepted"
-      && send.placement.kind === "open"
-      && !landedNow.has(send.id)
-      // An extension command may run without a user entry.
-      && !send.text.trim().startsWith("/")
-      && !queued.has(send.text.trim())
-      && observed.now - send.sentAt > MISSING_AFTER_MS)
-    .map((send) => send.id);
-  return { landed, missing };
 }

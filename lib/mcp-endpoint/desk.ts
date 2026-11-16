@@ -8,8 +8,8 @@ import type { ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiResponse } from "../types";
 import type { LiveSession, PiWebPorts, RunningTool, SessionRow, TranscriptSource, WorktreeOutcome } from "./ports";
 import { recheckIn, stepRest, type RestPhase, type RestReason } from "./rest";
-import { deliveryNews, reconcileFates, sendsInFlight, type Delivery, type Ledger, type SentMessage } from "./session-ledger";
-import { authorOf, branchSince, contentText, dialogDigest, matchLandings, NO_DIALOGS, type Author, type Cursor, type Delta, type EntryLike } from "./transcript";
+import type { Delivery, Ledger, SentMessage, UserEntry } from "./session-ledger";
+import { authorOf, branchSince, contentText, dialogDigest, NO_DIALOGS, type Author, type Cursor, type Delta, type EntryLike } from "./transcript";
 
 /** The generic MCP SDK client gives up at 60 s, nginx too, Cloudflare at 100 s. */
 export const WAIT_MAX_MS = 50_000;
@@ -161,13 +161,19 @@ function entryTime(entry: EntryLike | undefined): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
+function userEntries(transcript: TranscriptSource): UserEntry[] {
+  return transcript.getEntries()
+    .filter((entry) => entry.type === "message" && entry.message?.role === "user")
+    .map((entry) => ({ entryId: entry.id, text: contentText(entry.message?.content), time: entryTime(entry) }));
+}
+
 export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Date): Desk {
   function statusOf(id: string, live: LiveSession | null): SessionStatus {
     return {
       loaded: live !== null,
       running: live?.isRunning() ?? false,
       subagentsActive: ports.subagentsActive(id),
-      sendsInFlight: sendsInFlight(ledger.forSession(id)),
+      sendsInFlight: ledger.inFlight(id),
       dialogs: live?.openDialogs().map(toDialog) ?? [],
       queued: live?.queued() ?? { steering: [], followUp: [] },
       activity: activityOf(live?.runningTools() ?? []),
@@ -184,36 +190,16 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     return found;
   }
 
-  function reconcile(id: string, transcript: TranscriptSource, observed: { status: SessionStatus; now: number } | null): void {
-    const sends = ledger.forSession(id);
-    const unlanded = sends.filter((send) => send.placement.kind === "open" && send.outcome.state !== "refused");
-    if (unlanded.length === 0) return;
-    const landedIds = new Set(sends.flatMap((send) => send.placement.kind === "landed" ? [send.placement.entryId] : []));
-    const from = Math.min(...unlanded.map((send) => send.sentAt)) - 2_000;
-    const userEntries = transcript.getEntries()
-      .filter((entry) => entry.type === "message" && entry.message?.role === "user" && !landedIds.has(entry.id) && entryTime(entry) >= from)
-      .map((entry) => ({ entryId: entry.id, text: contentText(entry.message?.content), time: entryTime(entry) }));
-    const fates = reconcileFates(sends, {
-      landings: matchLandings(unlanded, userEntries),
-      queuedTexts: observed ? [...observed.status.queued.steering, ...observed.status.queued.followUp] : [],
-      atRest: observed !== null && !observed.status.running,
-      now: observed?.now ?? clock.now(),
-    });
-    for (const landing of fates.landed) ledger.markLanded(landing.sendId, landing.entryId);
-    for (const sendId of fates.missing) ledger.markMissing(sendId, observed?.now ?? clock.now());
-  }
-
-  /** What the chat shows of converted messages, each with its author. */
+  /** What the chat shows of converted messages, each with its author as the ledger last observed. */
   function shownMessages(id: string, transcript: TranscriptSource, converted: { messages: AgentMessage[]; entryIds: string[] }): LabeledMessages {
-    reconcile(id, transcript, null);
-    const landed = new Set(ledger.forSession(id).flatMap((send) => send.placement.kind === "landed" ? [send.placement.entryId] : []));
     const messages: AgentMessage[] = [];
     const authors: Author[] = [];
     converted.messages.forEach((message, index) => {
       if (isHiddenCustomMessage(message)) return;
-      const entry = transcript.getEntry(converted.entryIds[index]);
+      const entryId = converted.entryIds[index];
+      const entry = transcript.getEntry(entryId);
       messages.push(message);
-      authors.push(authorOf(message, { id: converted.entryIds[index], type: entry?.type ?? "message", time: entryTime(entry) }, landed, ledger.since));
+      authors.push(authorOf(message, entry?.type ?? "message", () => ledger.authorOf(id, { id: entryId, time: entryTime(entry) })));
     });
     return { messages, authors };
   }
@@ -242,8 +228,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       (error: unknown) => ledger.settle(record.id, { state: "refused", reason: errorText(error), at: clock.now() }),
     );
     await within(settled, SEND_ACCEPT_MS, signal);
-    if (ledger.get(record.id)?.outcome.state === "sending") ledger.markRepliedWhileSending(record.id);
-    return { send: ledger.get(record.id) ?? record, status: snapshotStatus(id), cursor };
+    return { send: ledger.markReplied(record.id), status: snapshotStatus(id), cursor };
   }
 
   return {
@@ -262,6 +247,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       }
       const page = ports.page(transcript, id, before ?? null, messages, before !== undefined);
       const status = snapshotStatus(id);
+      ledger.observe(id, { userEntries: userEntries(transcript), queued: null, now: clock.now() });
       const shown = {
         session: await heading(id, transcript),
         status,
@@ -291,10 +277,10 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
           const live = watch.live();
           const transcript = await source(id, live);
           const status = statusOf(id, live);
-          reconcile(id, transcript, { status, now });
+          ledger.observe(id, { userEntries: userEntries(transcript), queued: status.running ? null : [...status.queued.steering, ...status.queued.followUp], now });
           const delta = branchSince(transcript, cursor.entryId, MAX_DELTA_ENTRIES);
           const shown = shownMessages(id, transcript, ports.toMessages(delta.entries, id));
-          const news = deliveryNews(ledger.forSession(id), cursor.at);
+          const news = ledger.news(id, cursor.at);
           const dialogs = dialogDigest(status.dialogs.map((dialog) => dialog.id));
           phase = stepRest(phase, {
             now, deadline, aborted: signal.aborted,
@@ -338,7 +324,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     async stop(id) {
       await source(id, ports.live(id));
       // Before the wrapper is resolved: the agent's own send may still be building it, and an abort before the prompt lands stops nothing.
-      for (const until = clock.now() + STOP_SEND_GRACE_MS; sendsInFlight(ledger.forSession(id)) > 0 && clock.now() < until;) {
+      for (const until = clock.now() + STOP_SEND_GRACE_MS; ledger.inFlight(id) > 0 && clock.now() < until;) {
         await sleep(100);
       }
       const live = ports.live(id);
@@ -348,7 +334,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       if (!live || (!status.running && status.dialogs.length === 0)) return { kind: "idle", status };
       const withdrawn = await within(live.abort(), STOP_MS, NEVER);
       if (!withdrawn) return { kind: "unwinding" };
-      reconcile(id, live.transcript(), null);
+      ledger.observe(id, { userEntries: userEntries(live.transcript()), queued: null, now: clock.now() });
       const texts = [...withdrawn.steering, ...withdrawn.followUp];
       const authors = ledger.withdraw(id, texts, clock.now());
       return { kind: "stopped", withdrawn: texts.map((text, index) => ({ text, author: authors[index] })), status: snapshotStatus(id) };
