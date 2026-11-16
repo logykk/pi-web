@@ -184,13 +184,17 @@ export function createDeskMemory(): DeskMemory {
 
 export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: DeskMemory, clock: Clock = Date): Desk {
 
-  function hold(id: string): void {
-    const now = clock.now();
-    for (const [other, held] of holds) {
+  function releaseExpiredHolds(now: number): void {
+    for (const [id, held] of holds) {
       if (now - held.touchedAt < HOLD_MS) continue;
       held.dispose();
-      holds.delete(other);
+      holds.delete(id);
     }
+  }
+
+  function hold(id: string): void {
+    const now = clock.now();
+    releaseExpiredHolds(now);
     const existing = holds.get(id);
     if (existing) {
       existing.touchedAt = now;
