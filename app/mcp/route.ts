@@ -1,4 +1,4 @@
-import { dispatch, headerVersion, httpReply, parseBody, rpcError, RPC } from "@/lib/mcp-endpoint/jsonrpc";
+import { dispatch, httpReply, parseBody, rpcError, RPC, versionHeaderError } from "@/lib/mcp-endpoint/jsonrpc";
 import { guardMcpRequest, jsonResponse, linkBaseFor, MAX_BODY_BYTES, readBoundedBody, shutdownSignal } from "@/lib/mcp-endpoint/http";
 import { mcpServer } from "@/lib/mcp-endpoint/tools";
 import { hasJsonContentType } from "@/lib/request-security";
@@ -16,8 +16,8 @@ export async function POST(request: Request): Promise<Response> {
   const parsed = parseBody(text);
   if (!parsed.ok) return jsonResponse(400, parsed.error);
 
-  const version = headerVersion(request.headers.get("mcp-protocol-version"), parsed.messages);
-  if (!version.ok) return jsonResponse(400, version.response);
+  const refused = versionHeaderError(request.headers.get("mcp-protocol-version"), parsed.messages);
+  if (refused) return jsonResponse(400, refused);
 
   const call = { signal: AbortSignal.any([request.signal, shutdownSignal()]), linkBase: linkBaseFor(request) };
   const server = mcpServer();

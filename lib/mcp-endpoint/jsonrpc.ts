@@ -1,8 +1,6 @@
 export const LATEST_PROTOCOL_VERSION = "2025-11-25";
 export const PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26"] as const;
 export type ProtocolVersion = (typeof PROTOCOL_VERSIONS)[number];
-/** The spec: a request without MCP-Protocol-Version is 2025-03-26. */
-export const HEADERLESS_VERSION: ProtocolVersion = "2025-03-26";
 
 function isProtocolVersion(value: unknown): value is ProtocolVersion {
   return (PROTOCOL_VERSIONS as readonly unknown[]).includes(value);
@@ -68,21 +66,14 @@ export function parseBody(text: string): ParsedBody {
   return { ok: true, batch: false, messages: [message] };
 }
 
-export function headerVersion(
-  header: string | null,
-  messages: readonly ClientMessage[],
-): { ok: true; version: ProtocolVersion } | { ok: false; response: JsonRpcError } {
-  if (header === null) return { ok: true, version: HEADERLESS_VERSION };
+/** No header is 2025-03-26, which this server speaks; `initialize` negotiates in its params instead. */
+export function versionHeaderError(header: string | null, messages: readonly ClientMessage[]): JsonRpcError | null {
+  if (header === null) return null;
   const value = header.trim();
-  if (isProtocolVersion(value)) return { ok: true, version: value };
-  if (messages.every((message) => message.kind === "request" && message.method === "initialize")) {
-    return { ok: true, version: HEADERLESS_VERSION };
-  }
+  if (isProtocolVersion(value)) return null;
+  if (messages.every((message) => message.kind === "request" && message.method === "initialize")) return null;
   const single = messages.length === 1 && messages[0].kind === "request" ? messages[0].id : null;
-  return {
-    ok: false,
-    response: rpcError(single, RPC.invalidRequest, `Unsupported MCP-Protocol-Version: ${value}. This server speaks ${PROTOCOL_VERSIONS.join(", ")}.`),
-  };
+  return rpcError(single, RPC.invalidRequest, `Unsupported MCP-Protocol-Version: ${value}. This server speaks ${PROTOCOL_VERSIONS.join(", ")}.`);
 }
 
 export function httpReply(
