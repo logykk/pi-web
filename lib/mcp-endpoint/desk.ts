@@ -287,7 +287,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
         throw new DeskError("bad-input", `${before} is not an entry of session ${id}. Use the id from an \`older:\` line.`);
       }
       const page = ports.page(transcript, id, before ?? null, messages);
-      const status = snapshotStatus(id);
+      const status = statusOf(id, live);
       ledger.observe(id, { userEntries: userEntries(transcript), queued: null, now: clock.now() });
       const shown = {
         session: await heading(id, transcript),
@@ -364,7 +364,8 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
 
     async stop(id) {
       await source(id, ports.live(id));
-      // Before the wrapper is resolved: the agent's own send may still be building it, and an abort before the prompt lands stops nothing.
+      // Before the wrapper is resolved: the agent's own send may still be building it, and an
+      // abort before its prompt lands stops nothing.
       for (const until = clock.now() + STOP_SEND_GRACE_MS; ledger.inFlight(id) > 0 && clock.now() < until;) {
         await sleep(100);
       }
@@ -375,10 +376,10 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       if (!live || (!status.running && status.dialogs.length === 0)) return { kind: "idle", status };
       const aborted = await within(live.abort(), STOP_MS, NEVER);
       if (aborted.kind !== "done") return { kind: "unwinding" };
-      const withdrawn = aborted.value;
-      ledger.observe(id, { userEntries: userEntries(live.transcript()), queued: null, now: clock.now() });
-      const texts = [...withdrawn.steering, ...withdrawn.followUp];
-      const authors = ledger.withdraw(id, texts, clock.now());
+      const now = clock.now();
+      ledger.observe(id, { userEntries: userEntries(live.transcript()), queued: null, now });
+      const texts = [...aborted.value.steering, ...aborted.value.followUp];
+      const authors = ledger.withdraw(id, texts, now);
       return { kind: "stopped", withdrawn: texts.map((text, index) => ({ text, author: authors[index] })), status: snapshotStatus(id) };
     },
 

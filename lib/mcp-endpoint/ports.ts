@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { normalizeDirectory, resolveDirectory } from "../directory-browser";
+import { isBlockingExtensionUiRequest } from "../extension-ui-queue";
 import { allowFileRoot } from "../file-access";
 import { getProjectTrustStatus } from "../project-trust";
 import {
@@ -14,7 +15,6 @@ import {
   attachSessionProjectInfo, buildSessionContext, getAgentDir, invalidateSessionListCache, listAllSessions, mergeSessionLists,
   openSessionManager, resolveSessionPath,
 } from "../session-reader";
-import { isBlockingExtensionUiRequest } from "../extension-ui-queue";
 import { hasUnsettledSubagentRun } from "../subagent-runtime";
 import { getToolNamesForPreset, type ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiRequest, ExtensionUiResponse, SessionEntry } from "../types";
