@@ -2,37 +2,33 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { isApiRequestAllowed } from "../request-security";
 import { processGlobal } from "./process-global";
 
-export const MCP_TOKEN_ENV = "PI_WEB_MCP_TOKEN";
-export const MIN_TOKEN_LENGTH = 32;
+const MCP_TOKEN_ENV = "PI_WEB_MCP_TOKEN";
+const MIN_TOKEN_LENGTH = 32;
 export const MAX_BODY_BYTES = 1024 * 1024;
-export const LINK_BASE_ENV = "PI_WEB_MCP_LINK_BASE";
+const LINK_BASE_ENV = "PI_WEB_MCP_LINK_BASE";
 
-export type TokenConfig =
-  | { readonly kind: "disabled"; readonly why: "unset" | "too-short" }
-  | { readonly kind: "enabled"; readonly digest: Buffer };
+/** Null while the endpoint is off: no token, or one shorter than MIN_TOKEN_LENGTH. */
+function configuredToken(env: NodeJS.ProcessEnv): string | null {
+  const token = env[MCP_TOKEN_ENV]?.trim() ?? "";
+  if (token.length >= MIN_TOKEN_LENGTH) return token;
+  if (token) {
+    processGlobal("short-token-warned", () => {
+      console.warn(`[pi-web] ${MCP_TOKEN_ENV} is shorter than ${MIN_TOKEN_LENGTH} characters, so /mcp stays off.`);
+      return true;
+    });
+  }
+  return null;
+}
 
 function sha256(text: string): Buffer {
   return createHash("sha256").update(text, "utf8").digest();
 }
 
-export function readTokenConfig(env: NodeJS.ProcessEnv = process.env): TokenConfig {
-  const token = env[MCP_TOKEN_ENV]?.trim() ?? "";
-  if (!token) return { kind: "disabled", why: "unset" };
-  if (token.length < MIN_TOKEN_LENGTH) {
-    processGlobal("short-token-warned", () => {
-      console.warn(`[pi-web] ${MCP_TOKEN_ENV} is shorter than ${MIN_TOKEN_LENGTH} characters, so /mcp stays off.`);
-      return true;
-    });
-    return { kind: "disabled", why: "too-short" };
-  }
-  return { kind: "enabled", digest: sha256(token) };
-}
-
 const BEARER = /^Bearer +(\S+) *$/i;
 
-export function bearerMatches(authorization: string | null, digest: Buffer): boolean {
+function bearerMatches(authorization: string | null, token: string): boolean {
   const match = BEARER.exec(authorization ?? "");
-  return match !== null && timingSafeEqual(sha256(match[1]), digest);
+  return match !== null && timingSafeEqual(sha256(match[1]), sha256(token));
 }
 
 export function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
@@ -40,15 +36,15 @@ export function jsonResponse(status: number, body: unknown, headers: Record<stri
 }
 
 export function guardMcpRequest(request: Request, env: NodeJS.ProcessEnv = process.env): Response | null {
-  const config = readTokenConfig(env);
-  if (config.kind === "disabled") {
+  const token = configuredToken(env);
+  if (token === null) {
     // Not 401, which sends some MCP clients into OAuth discovery for a server that has none.
     return jsonResponse(404, {
       error: `pi-web's MCP endpoint is off. Set ${MCP_TOKEN_ENV} (${MIN_TOKEN_LENGTH}+ characters) in pi-web's environment and restart it.`,
     });
   }
   if (!isApiRequestAllowed(request)) return jsonResponse(403, { error: "Untrusted MCP request" });
-  if (!bearerMatches(request.headers.get("authorization"), config.digest)) {
+  if (!bearerMatches(request.headers.get("authorization"), token)) {
     return jsonResponse(
       401,
       { error: `Send Authorization: Bearer <${MCP_TOKEN_ENV}>.` },
@@ -78,13 +74,16 @@ export async function readBoundedBody(request: Request, maxBytes: number): Promi
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Never `request.url`: under `next start` it can carry the bind address, which a remote person cannot open. */
+/**
+ * Never `request.url`: under `next start` it can carry the bind address, which a remote person
+ * cannot open. Called after guardMcpRequest, which refuses a request without Host.
+ */
 export function linkBaseFor(request: Request, env: NodeJS.ProcessEnv = process.env): string {
   const configured = env[LINK_BASE_ENV]?.trim();
   if (configured) return configured.replace(/\/+$/, "");
   const proto = request.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim().toLowerCase();
   const scheme = proto === "https" || proto === "http" ? proto : "http";
-  return `${scheme}://${request.headers.get("host") ?? "localhost"}`;
+  return `${scheme}://${request.headers.get("host")}`;
 }
 
 /**
