@@ -1,9 +1,9 @@
-import { realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join, sep } from "node:path";
+import { isAbsolute } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { isHiddenCustomMessage } from "../message-display";
+import { isPathWithinRoots } from "../path-security";
 import { SESSION_ID_PATTERN } from "../session-ui-state-shared";
+import { toolInputPreview } from "../tool-fields";
 import type { ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiResponse } from "../types";
 import type { LiveSession, PiWebPorts, RunningTool, SessionRow, TranscriptSource, WorktreeOutcome } from "./ports";
@@ -204,6 +204,23 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     return { messages, authors };
   }
 
+  /** An existing folder on pi-web's machine, by its realpath, as the directory picker selects it. */
+  async function directoryOf(input: string): Promise<string> {
+    const path = input.trim();
+    if (path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) {
+      throw new DeskError("bad-input", `${JSON.stringify(input)} is not an absolute path (or ~/…) on pi-web's machine.`);
+    }
+    const found = await ports.directory(path);
+    switch (found.kind) {
+      case "directory":
+        return found.path;
+      case "missing":
+        throw new DeskError("bad-input", `${found.path} does not exist on pi-web's machine.`);
+      case "file":
+        throw new DeskError("bad-input", `${found.path} is a file, not a folder.`);
+    }
+  }
+
   async function heading(id: SessionId, transcript: TranscriptSource): Promise<SessionHeading> {
     const cwd = transcript.getCwd();
     const firstUser = transcript.getEntries().find((entry) => entry.type === "message" && entry.message?.role === "user");
@@ -233,9 +250,8 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
 
   return {
     async sessions({ cwd, limit }) {
-      const dir = cwd === undefined ? null : canonicalDirectory(cwd);
-      const rows = (await ports.listSessions())
-        .filter((row) => dir === null || row.cwd === dir || row.cwd.startsWith(dir.endsWith(sep) ? dir : dir + sep));
+      const roots = cwd === undefined ? null : new Set([await directoryOf(cwd)]);
+      const rows = (await ports.listSessions()).filter((row) => roots === null || isPathWithinRoots(row.cwd, roots));
       return { rows: rows.slice(0, limit), total: rows.length };
     },
 
@@ -341,7 +357,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     },
 
     async newSession({ cwd, message, model, thinking, tools }, signal) {
-      const dir = canonicalDirectory(cwd);
+      const dir = await directoryOf(cwd);
       const slash = model?.indexOf("/") ?? -1;
       if (model !== undefined && (slash <= 0 || slash === model.length - 1)) {
         throw new DeskError("bad-input", `model must be provider/modelId, e.g. anthropic/claude-sonnet-4-5, not ${JSON.stringify(model)}.`);
@@ -371,7 +387,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     },
 
     async newWorktree({ project, branch }, signal) {
-      const dir = canonicalDirectory(project);
+      const dir = await directoryOf(project);
       try {
         return await within(ports.addWorktree(dir, branch), WORKTREE_MS, signal) ?? { kind: "creating", branch: branch.trim() };
       } catch (error) {
@@ -481,8 +497,8 @@ function toDialog(request: BlockingExtensionUiRequest): Dialog {
 function activityOf(tools: readonly RunningTool[]): string | null {
   const newest = tools.reduce<RunningTool | null>((latest, tool) => !latest || tool.elapsedMs <= latest.elapsedMs ? tool : latest, null);
   if (!newest) return null;
-  const detail = toolDetail(newest.args);
-  return `${newest.toolName}${detail ? ` ${detail}` : ""} for ${Math.round(newest.elapsedMs / 1000)} s`;
+  const preview = toolInputPreview(newest.args, null, newest.toolName).replace(/\s+/g, " ").trim();
+  return `${newest.toolName}${preview ? ` \`${preview}\`` : ""} for ${Math.round(newest.elapsedMs / 1000)} s`;
 }
 
 const YES_NO: Readonly<Record<string, boolean>> = { yes: true, true: true, y: true, no: false, false: false, n: false };
@@ -514,29 +530,6 @@ function toResponse(dialog: Dialog, answer: DialogAnswer): { response: Extension
       return { response: { type: "extension_ui_response", id: dialog.id, value: String(value) }, shown: String(value) };
     }
   }
-}
-
-function toolDetail(args: unknown): string {
-  if (typeof args !== "object" || args === null) return "";
-  const record = args as Record<string, unknown>;
-  const value = [record.command, record.path, record.pattern, ...Object.values(record)].find((candidate) => typeof candidate === "string");
-  if (typeof value !== "string") return "";
-  const flat = value.replace(/\s+/g, " ").trim();
-  return `\`${flat.length > 60 ? `${flat.slice(0, 59)}…` : flat}\``;
-}
-
-export function canonicalDirectory(input: string): string {
-  const trimmed = input.trim();
-  const expanded = trimmed === "~" ? homedir() : trimmed.startsWith("~/") ? join(homedir(), trimmed.slice(2)) : trimmed;
-  if (!isAbsolute(expanded)) throw new DeskError("bad-input", `${JSON.stringify(input)} is not an absolute path (or ~/…) on pi-web's machine.`);
-  let real: string;
-  try {
-    real = realpathSync(expanded);
-  } catch {
-    throw new DeskError("bad-input", `${expanded} does not exist on pi-web's machine.`);
-  }
-  if (!statSync(real).isDirectory()) throw new DeskError("bad-input", `${real} is a file, not a folder.`);
-  return real;
 }
 
 function sleep(ms: number): Promise<void> {

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { normalizeDirectory, resolveDirectory } from "../directory-browser";
 import { allowFileRoot } from "../file-access";
 import { getProjectTrustStatus } from "../project-trust";
 import {
@@ -96,6 +98,12 @@ export type WorktreeOutcome =
   | { readonly kind: "exists"; readonly path: string; readonly branch: string }
   | { readonly kind: "held-by-missing"; readonly path: string; readonly branch: string };
 
+/** What is at a path, `~` expanded and resolved as the directory picker does; a directory by its realpath. */
+export type DirectoryLookup =
+  | { readonly kind: "directory"; readonly path: string }
+  | { readonly kind: "missing"; readonly path: string }
+  | { readonly kind: "file"; readonly path: string };
+
 export interface PiWebPorts {
   live(id: string): LiveSession | null;
   open(id: string): Promise<LiveSession | null>;
@@ -110,6 +118,7 @@ export interface PiWebPorts {
   untrusted(cwd: string): boolean;
   hold(id: string): void;
   addWorktree(dir: string, branch: string): Promise<WorktreeOutcome>;
+  directory(path: string): Promise<DirectoryLookup>;
 }
 
 export const HOLD_MS = 30 * 60_000;
@@ -223,6 +232,16 @@ export function piWebPorts(): PiWebPorts {
         isActive: () => Date.now() - hold.touchedAt < HOLD_MS,
       });
       holds.set(id, hold);
+    },
+
+    async directory(path) {
+      let real: string;
+      try {
+        real = await resolveDirectory(path);
+      } catch {
+        return { kind: "missing", path: normalizeDirectory(path) };
+      }
+      return (await stat(real)).isDirectory() ? { kind: "directory", path: real } : { kind: "file", path: real };
     },
 
     addWorktree(dir, branch) {
