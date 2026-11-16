@@ -17,7 +17,7 @@ const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as 
 const INSTRUCTIONS = [
   "These tools work in pi sessions of a pi-web server. A person may be using the same session in pi-web's browser UI at the same time: both of you send messages, both see everything.",
   "Find a session with pi_sessions (or take the pi-web link the person gives you), or start one with pi_new_session (pi_new_worktree first for a fresh branch).",
-  "Join a session with pi_read. Send with pi_send: it returns once pi has taken the message, queued behind any run in progress, the person's included. Then call pi_wait until it says pi is at rest; each wait lasts at most 50 s, so call it again while pi is working.",
+  `Join a session with pi_read. Send with pi_send: it returns once pi has taken the message, queued behind any run in progress, the person's included. Then call pi_wait until it says pi is at rest; each wait lasts at most ${WAIT_MAX_MS / 1000} s, so call it again while pi is working.`,
   "Every reply about a session ends with `cursor: …`. Always pass the newest cursor to pi_wait (and pi_send). If a call fails or its reply is lost, repeat it with the same cursor: nothing moved.",
   "User messages are labeled [agent] (sent through these tools), [person] (typed in pi-web) or [user] (unknown, from before pi-web last restarted). pi's replies are [pi].",
   "pi_stop stops pi for the person too. When an extension asks a question, the reply shows it with the pi_answer call that answers it; the person sees the same question and the first answer counts.",
@@ -38,7 +38,7 @@ function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
-      run: async (args) => renderSessionList(await desk.sessions({ cwd: args.cwd, limit: args.limit })),
+      run: async (filter) => renderSessionList(await desk.sessions(filter)),
     }),
 
     defineTool({
@@ -56,10 +56,7 @@ function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
-      run: async (args, call) => {
-        const id = sessionId(args.session);
-        return renderRead(await desk.read(id, { messages: args.messages, ...(args.before !== undefined ? { before: args.before } : {}) }), call.linkBase);
-      },
+      run: async ({ session, ...page }, call) => renderRead(await desk.read(sessionId(session), page), call.linkBase),
     }),
 
     defineTool({
@@ -78,10 +75,9 @@ function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { openWorldHint: false },
-      run: async (args, call) => {
-        const id = sessionId(args.session);
-        const cursor = args.cursor === undefined ? null : requiredCursor(args.cursor);
-        return renderSend(id, await desk.send(id, args.message, { steer: args.steer, cursor }, call.signal));
+      run: async ({ session, message, steer, cursor }, call) => {
+        const id = sessionId(session);
+        return renderSend(id, await desk.send(id, message, { steer, cursor: cursor === undefined ? null : requiredCursor(cursor) }, call.signal));
       },
     }),
 
@@ -100,9 +96,9 @@ function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
-      run: async (args, call) => {
-        const id = sessionId(args.session);
-        return renderWait(id, await desk.wait(id, requiredCursor(args.cursor), args.timeout_s * 1000, call.signal));
+      run: async ({ session, cursor, timeout_s }, call) => {
+        const id = sessionId(session);
+        return renderWait(id, await desk.wait(id, requiredCursor(cursor), timeout_s * 1000, call.signal));
       },
     }),
 
@@ -122,10 +118,9 @@ function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { openWorldHint: false },
-      run: async (args) => {
-        if ((args.answer !== undefined) === (args.cancel === true)) return { text: "Pass answer, or cancel: true; not both and not neither.", isError: true };
-        const id = sessionId(args.session);
-        return renderAnswer(args.dialog, await desk.answer(id, args.dialog, args.answer !== undefined ? { value: args.answer } : { cancel: true }));
+      run: async ({ session, dialog, answer, cancel }) => {
+        if ((answer !== undefined) === (cancel === true)) return { text: "Pass answer, or cancel: true; not both and not neither.", isError: true };
+        return renderAnswer(dialog, await desk.answer(sessionId(session), dialog, answer !== undefined ? { value: answer } : { cancel: true }));
       },
     }),
 
@@ -135,7 +130,7 @@ function createTools(desk: Desk): ToolSpec[] {
       description: "Stop pi in a session for everyone, as Stop in pi-web does: ends the current run whoever started it, dismisses open questions and withdraws every queued message, the person's included. The reply lists what it withdrew; it does not go back to the person's composer. Does nothing when pi is idle.",
       inputSchema: { type: "object", properties: { session: SESSION }, required: ["session"], additionalProperties: false },
       annotations: { destructiveHint: true, openWorldHint: false },
-      run: async (args) => renderStop(await desk.stop(sessionId(args.session))),
+      run: async ({ session }) => renderStop(await desk.stop(sessionId(session))),
     }),
 
     defineTool({
@@ -160,7 +155,7 @@ function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { openWorldHint: false },
-      run: async (args, call) => renderNewSession(await desk.newSession(args, call.signal), call.linkBase),
+      run: async (request, call) => renderNewSession(await desk.newSession(request, call.signal), call.linkBase),
     }),
 
     defineTool({
@@ -177,7 +172,7 @@ function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { idempotentHint: true, openWorldHint: false },
-      run: async (args, call) => renderWorktree(await desk.newWorktree(args, call.signal)),
+      run: async (request, call) => renderWorktree(await desk.newWorktree(request, call.signal)),
     }),
   ];
 }
