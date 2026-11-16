@@ -1,7 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import packageJson from "../../package.json";
 import { TOOL_PRESET_VALUES } from "../tool-presets";
-import { createDesk, createDeskMemory, DeskError, parseSessionRef, WAIT_DEFAULT_MS, WAIT_MAX_MS, type Desk, type SessionId } from "./desk";
+import { createDesk, createDeskMemory, ToolError, parseSessionRef, WAIT_DEFAULT_MS, WAIT_MAX_MS, type Desk, type SessionId } from "./desk";
 import { endpointTool, type EndpointServer, type ToolSpec } from "./jsonrpc";
 import { piWebPorts } from "./ports";
 import { processGlobal } from "./process-global";
@@ -184,7 +184,7 @@ export function serverFor(desk: Desk): EndpointServer {
     version: packageJson.version,
     instructions: INSTRUCTIONS,
     tools: createTools(desk),
-    isToolError: (error) => error instanceof DeskError,
+    isToolError: (error) => error instanceof ToolError,
   };
 }
 
@@ -197,12 +197,12 @@ export function mcpServer(): EndpointServer {
 
 function sessionId(ref: string): SessionId {
   const id = parseSessionRef(ref);
-  if (!id) throw new DeskError(`${JSON.stringify(ref)} is not a pi session id or a pi-web link with ?session=<id>. pi_sessions lists the sessions.`);
+  if (!id) throw new ToolError(`${JSON.stringify(ref)} is not a pi session id or a pi-web link with ?session=<id>. pi_sessions lists the sessions.`);
   return id;
 }
 
 function requiredCursor(text: string): Cursor {
   const cursor = decodeCursor(text);
-  if (!cursor) throw new DeskError("That cursor did not come from this server. Call pi_read to get a fresh one.");
+  if (!cursor) throw new ToolError("That cursor did not come from this server. Call pi_read to get a fresh one.");
   return cursor;
 }

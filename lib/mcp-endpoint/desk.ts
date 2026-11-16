@@ -117,7 +117,7 @@ export interface NewSessionResult {
 
 export type NewWorktreeResult = WorktreeOutcome | { readonly kind: "creating"; readonly branch: string };
 
-export class DeskError extends Error {}
+export class ToolError extends Error {}
 
 export interface Clock {
   now(): number;
@@ -144,13 +144,13 @@ export interface Desk {
 
 const NEVER = new AbortController().signal;
 
-function notFound(id: string): DeskError {
-  return new DeskError(`No pi session ${id}. pi_sessions lists the sessions.`);
+function notFound(id: string): ToolError {
+  return new ToolError(`No pi session ${id}. pi_sessions lists the sessions.`);
 }
 
 /** pi hands a blank message to the model as it is; pi-web's composer never sends one. */
 function refuseBlank(text: string): void {
-  if (!text.trim()) throw new DeskError("message must not be blank.");
+  if (!text.trim()) throw new ToolError("message must not be blank.");
 }
 
 function errorText(error: unknown): string {
@@ -239,16 +239,16 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
   async function directoryOf(input: string): Promise<string> {
     const path = input.trim();
     if (path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) {
-      throw new DeskError(`${JSON.stringify(input)} is not an absolute path (or ~/…) on pi-web's machine.`);
+      throw new ToolError(`${JSON.stringify(input)} is not an absolute path (or ~/…) on pi-web's machine.`);
     }
     const found = await ports.directory(path);
     switch (found.kind) {
       case "directory":
         return found.path;
       case "missing":
-        throw new DeskError(`${found.path} does not exist on pi-web's machine.`);
+        throw new ToolError(`${found.path} does not exist on pi-web's machine.`);
       case "file":
-        throw new DeskError(`${found.path} is a file, not a folder.`);
+        throw new ToolError(`${found.path} is a file, not a folder.`);
     }
   }
 
@@ -290,7 +290,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
       const live = ports.live(id);
       const transcript = await source(id, live);
       if (before !== undefined && !transcript.getEntry(before)) {
-        throw new DeskError(`${before} is not an entry of session ${id}. Use the id from an \`older:\` line.`);
+        throw new ToolError(`${before} is not an entry of session ${id}. Use the id from an \`older:\` line.`);
       }
       const page = ports.page(transcript, id, before ?? null, messages);
       const status = statusOf(id, live);
@@ -392,7 +392,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
       const dir = await directoryOf(cwd);
       const slash = model?.indexOf("/") ?? -1;
       if (model !== undefined && (slash <= 0 || slash === model.length - 1)) {
-        throw new DeskError(`model must be provider/modelId, e.g. anthropic/claude-sonnet-4-5, not ${JSON.stringify(model)}.`);
+        throw new ToolError(`model must be provider/modelId, e.g. anthropic/claude-sonnet-4-5, not ${JSON.stringify(model)}.`);
       }
       const creating = ports.create(dir, {
         tools,
@@ -403,10 +403,10 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
       try {
         built = await within(creating, CREATE_MS, signal);
       } catch (error) {
-        throw new DeskError(`pi-web could not start a session in ${dir}: ${errorText(error)}`);
+        throw new ToolError(`pi-web could not start a session in ${dir}: ${errorText(error)}`);
       }
-      if (built.kind === "timeout") throw new DeskError(`pi-web was still building the session after ${CREATE_MS / 1000} s; nothing was sent. Try again.`);
-      if (built.kind === "aborted") throw new DeskError("The call ended early (cancelled, or pi-web is stopping) while pi-web was building the session; nothing was sent.");
+      if (built.kind === "timeout") throw new ToolError(`pi-web was still building the session after ${CREATE_MS / 1000} s; nothing was sent. Try again.`);
+      if (built.kind === "aborted") throw new ToolError("The call ended early (cancelled, or pi-web is stopping) while pi-web was building the session; nothing was sent.");
       const session = built.value;
       hold(session.id);
       const transcript = session.transcript();
@@ -432,7 +432,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
         const done = await within(checkout, WORKTREE_MS, signal);
         return done.kind === "done" ? done.value : { kind: "creating", branch: branch.trim() };
       } catch (error) {
-        throw new DeskError(`git could not create the worktree: ${errorText(error)}`);
+        throw new ToolError(`git could not create the worktree: ${errorText(error)}`);
       }
     },
   };
@@ -549,7 +549,7 @@ function toResponse(dialog: Dialog, answer: DialogAnswer): { response: Extension
   const { value } = answer;
   switch (dialog.kind) {
     case "panel":
-      throw new DeskError("That is a panel that takes keystrokes; only the person can answer it in pi-web.");
+      throw new ToolError("That is a panel that takes keystrokes; only the person can answer it in pi-web.");
     case "choice": {
       const option = typeof value === "number"
         ? (Number.isInteger(value) ? dialog.options[value - 1] : undefined)
@@ -557,17 +557,17 @@ function toResponse(dialog: Dialog, answer: DialogAnswer): { response: Extension
           ? dialog.options.find((candidate) => candidate === value) ?? dialog.options.find((candidate) => candidate.trim().toLowerCase() === value.trim().toLowerCase())
           : undefined;
       if (option === undefined) {
-        throw new DeskError(`This question takes one of its options, by text or 1-based number: ${dialog.options.map((o, i) => `${i + 1}. ${o}`).join("  ")}`);
+        throw new ToolError(`This question takes one of its options, by text or 1-based number: ${dialog.options.map((o, i) => `${i + 1}. ${o}`).join("  ")}`);
       }
       return { response: { type: "extension_ui_response", id: dialog.id, value: option }, shown: option };
     }
     case "confirm": {
       const confirmed = typeof value === "boolean" ? value : typeof value === "string" ? YES_NO[value.trim().toLowerCase()] : undefined;
-      if (confirmed === undefined) throw new DeskError("This question takes true or false.");
+      if (confirmed === undefined) throw new ToolError("This question takes true or false.");
       return { response: { type: "extension_ui_response", id: dialog.id, confirmed }, shown: confirmed ? "yes" : "no" };
     }
     case "text": {
-      if (typeof value === "boolean") throw new DeskError("This question takes text.");
+      if (typeof value === "boolean") throw new ToolError("This question takes text.");
       return { response: { type: "extension_ui_response", id: dialog.id, value: String(value) }, shown: String(value) };
     }
   }
