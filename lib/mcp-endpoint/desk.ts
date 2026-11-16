@@ -283,6 +283,12 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
     return { send: ledger.markReplied(record.id), status: snapshotStatus(id), cursor };
   }
 
+  async function waitForOwnSendsToReachPi(id: string): Promise<void> {
+    for (const until = clock.now() + STOP_SEND_GRACE_MS; ledger.inFlight(id) > 0 && clock.now() < until;) {
+      await sleep(100);
+    }
+  }
+
   return {
     async sessions({ cwd, limit }) {
       const roots = cwd === undefined ? null : new Set([await directoryOf(cwd)]);
@@ -374,9 +380,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
 
     async stop(id) {
       await source(id, ports.live(id));
-      for (const until = clock.now() + STOP_SEND_GRACE_MS; ledger.inFlight(id) > 0 && clock.now() < until;) {
-        await sleep(100);
-      }
+      await waitForOwnSendsToReachPi(id);
       const live = ports.live(id);
       if (live) hold(id);
       const status = statusOf(id, live);
