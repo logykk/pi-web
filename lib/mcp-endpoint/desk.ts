@@ -119,11 +119,8 @@ export interface NewSessionResult {
 
 export type NewWorktreeResult = WorktreeOutcome | { readonly kind: "creating"; readonly branch: string };
 
-export class DeskError extends Error {
-  constructor(readonly kind: "not-found" | "bad-input" | "unavailable", message: string) {
-    super(message);
-  }
-}
+/** A message for the model: the tool answers with it as an `isError` result. */
+export class DeskError extends Error {}
 
 export interface Clock {
   now(): number;
@@ -151,7 +148,7 @@ export interface Desk {
 const NEVER = new AbortController().signal;
 
 function notFound(id: string): DeskError {
-  return new DeskError("not-found", `No pi session ${id}. pi_sessions lists the sessions.`);
+  return new DeskError(`No pi session ${id}. pi_sessions lists the sessions.`);
 }
 
 function errorText(error: unknown): string {
@@ -233,16 +230,16 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
   async function directoryOf(input: string): Promise<string> {
     const path = input.trim();
     if (path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) {
-      throw new DeskError("bad-input", `${JSON.stringify(input)} is not an absolute path (or ~/…) on pi-web's machine.`);
+      throw new DeskError(`${JSON.stringify(input)} is not an absolute path (or ~/…) on pi-web's machine.`);
     }
     const found = await ports.directory(path);
     switch (found.kind) {
       case "directory":
         return found.path;
       case "missing":
-        throw new DeskError("bad-input", `${found.path} does not exist on pi-web's machine.`);
+        throw new DeskError(`${found.path} does not exist on pi-web's machine.`);
       case "file":
-        throw new DeskError("bad-input", `${found.path} is a file, not a folder.`);
+        throw new DeskError(`${found.path} is a file, not a folder.`);
     }
   }
 
@@ -284,7 +281,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       const live = ports.live(id);
       const transcript = await source(id, live);
       if (before !== undefined && !transcript.getEntry(before)) {
-        throw new DeskError("bad-input", `${before} is not an entry of session ${id}. Use the id from an \`older:\` line.`);
+        throw new DeskError(`${before} is not an entry of session ${id}. Use the id from an \`older:\` line.`);
       }
       const page = ports.page(transcript, id, before ?? null, messages);
       const status = statusOf(id, live);
@@ -387,7 +384,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       const dir = await directoryOf(cwd);
       const slash = model?.indexOf("/") ?? -1;
       if (model !== undefined && (slash <= 0 || slash === model.length - 1)) {
-        throw new DeskError("bad-input", `model must be provider/modelId, e.g. anthropic/claude-sonnet-4-5, not ${JSON.stringify(model)}.`);
+        throw new DeskError(`model must be provider/modelId, e.g. anthropic/claude-sonnet-4-5, not ${JSON.stringify(model)}.`);
       }
       const creating = ports.create(dir, {
         tools,
@@ -398,10 +395,10 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       try {
         built = await within(creating, CREATE_MS, signal);
       } catch (error) {
-        throw new DeskError("bad-input", `pi-web could not start a session in ${dir}: ${errorText(error)}`);
+        throw new DeskError(`pi-web could not start a session in ${dir}: ${errorText(error)}`);
       }
-      if (built.kind === "timeout") throw new DeskError("unavailable", `pi-web was still building the session after ${CREATE_MS / 1000} s; nothing was sent. Try again.`);
-      if (built.kind === "aborted") throw new DeskError("unavailable", "The call ended early (cancelled, or pi-web is stopping) while pi-web was building the session; nothing was sent.");
+      if (built.kind === "timeout") throw new DeskError(`pi-web was still building the session after ${CREATE_MS / 1000} s; nothing was sent. Try again.`);
+      if (built.kind === "aborted") throw new DeskError("The call ended early (cancelled, or pi-web is stopping) while pi-web was building the session; nothing was sent.");
       const session = built.value;
       hold(session.id);
       const transcript = session.transcript();
@@ -427,7 +424,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
         const done = await within(checkout, WORKTREE_MS, signal);
         return done.kind === "done" ? done.value : { kind: "creating", branch: branch.trim() };
       } catch (error) {
-        throw new DeskError("bad-input", `git could not create the worktree: ${errorText(error)}`);
+        throw new DeskError(`git could not create the worktree: ${errorText(error)}`);
       }
     },
   };
@@ -544,7 +541,7 @@ function toResponse(dialog: Dialog, answer: DialogAnswer): { response: Extension
   const { value } = answer;
   switch (dialog.kind) {
     case "panel":
-      throw new DeskError("bad-input", "That is a panel that takes keystrokes; only the person can answer it in pi-web.");
+      throw new DeskError("That is a panel that takes keystrokes; only the person can answer it in pi-web.");
     case "choice": {
       const option = typeof value === "number"
         ? (Number.isInteger(value) ? dialog.options[value - 1] : undefined)
@@ -552,17 +549,17 @@ function toResponse(dialog: Dialog, answer: DialogAnswer): { response: Extension
           ? dialog.options.find((candidate) => candidate === value) ?? dialog.options.find((candidate) => candidate.trim().toLowerCase() === value.trim().toLowerCase())
           : undefined;
       if (option === undefined) {
-        throw new DeskError("bad-input", `This question takes one of its options, by text or 1-based number: ${dialog.options.map((o, i) => `${i + 1}. ${o}`).join("  ")}`);
+        throw new DeskError(`This question takes one of its options, by text or 1-based number: ${dialog.options.map((o, i) => `${i + 1}. ${o}`).join("  ")}`);
       }
       return { response: { type: "extension_ui_response", id: dialog.id, value: option }, shown: option };
     }
     case "confirm": {
       const confirmed = typeof value === "boolean" ? value : typeof value === "string" ? YES_NO[value.trim().toLowerCase()] : undefined;
-      if (confirmed === undefined) throw new DeskError("bad-input", "This question takes true or false.");
+      if (confirmed === undefined) throw new DeskError("This question takes true or false.");
       return { response: { type: "extension_ui_response", id: dialog.id, confirmed }, shown: confirmed ? "yes" : "no" };
     }
     case "text": {
-      if (typeof value === "boolean") throw new DeskError("bad-input", "This question takes text.");
+      if (typeof value === "boolean") throw new DeskError("This question takes text.");
       return { response: { type: "extension_ui_response", id: dialog.id, value: String(value) }, shown: String(value) };
     }
   }

@@ -205,6 +205,8 @@ export interface McpServerDefinition {
   readonly version: string;
   readonly instructions: string;
   readonly tools: readonly ToolSpec[];
+  /** An error whose message is the tool's answer to the model; any other throw is logged as pi-web's failure. */
+  isToolError(error: unknown): error is Error;
 }
 
 function toolCallResult(text: ToolText) {
@@ -222,6 +224,7 @@ async function callTool(server: McpServerDefinition, id: JsonRpcId, params: unkn
   try {
     return { jsonrpc: "2.0", id, result: toolCallResult(await tool.run(parsed.value, call)) };
   } catch (error) {
+    if (server.isToolError(error)) return { jsonrpc: "2.0", id, result: toolCallResult({ text: error.message, isError: true }) };
     console.error(`[pi-web] MCP tool ${tool.name} failed:`, error instanceof Error ? error.stack ?? error.message : error);
     const message = error instanceof Error ? error.message : String(error);
     return { jsonrpc: "2.0", id, result: toolCallResult({ text: `pi-web failed: ${message}`, isError: true }) };

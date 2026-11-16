@@ -16,7 +16,7 @@ const SESSION = { type: "string", minLength: 1, description: "The session id, or
 const CURSOR = { type: "string", minLength: 1, description: "The `cursor:` line of the newest reply about this session." } as const;
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ThinkingLevel[];
 
-export const INSTRUCTIONS = [
+const INSTRUCTIONS = [
   "These tools work in pi sessions of a pi-web server. A person may be using the same session in pi-web's browser UI at the same time: both of you send messages, both see everything.",
   "Find a session with pi_sessions (or take the pi-web link the person gives you), or start one with pi_new_session (pi_new_worktree first for a fresh branch).",
   "Join a session with pi_read. Send with pi_send: it returns once pi has taken the message, queued behind any run in progress, the person's included. Then call pi_wait until it says pi is at rest; each wait lasts at most 50 s, so call it again while pi is working.",
@@ -25,7 +25,7 @@ export const INSTRUCTIONS = [
   "pi_stop stops pi for the person too. When an extension asks a question, the reply shows it with the pi_answer call that answers it; the person sees the same question and the first answer counts.",
 ].join("\n\n");
 
-export function createTools(desk: Desk): ToolSpec[] {
+function createTools(desk: Desk): ToolSpec[] {
   return [
     defineTool({
       name: "pi_sessions",
@@ -40,7 +40,7 @@ export function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
-      run: (args) => guarded(async () => renderSessionList(await desk.sessions({ cwd: args.cwd, limit: args.limit }))),
+      run: async (args) => renderSessionList(await desk.sessions({ cwd: args.cwd, limit: args.limit })),
     }),
 
     defineTool({
@@ -58,10 +58,10 @@ export function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
-      run: (args, call) => guarded(async () => {
+      run: async (args, call) => {
         const id = sessionId(args.session);
         return renderRead(await desk.read(id, { messages: args.messages, ...(args.before !== undefined ? { before: args.before } : {}) }), call);
-      }),
+      },
     }),
 
     defineTool({
@@ -80,11 +80,11 @@ export function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { openWorldHint: false },
-      run: (args, call) => guarded(async () => {
+      run: async (args, call) => {
         const id = sessionId(args.session);
         const cursor = args.cursor === undefined ? null : requiredCursor(args.cursor);
         return renderSend(id, await desk.send(id, args.message, { steer: args.steer, cursor }, call.signal));
-      }),
+      },
     }),
 
     defineTool({
@@ -102,10 +102,10 @@ export function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
-      run: (args, call) => guarded(async () => {
+      run: async (args, call) => {
         const id = sessionId(args.session);
         return renderWait(id, await desk.wait(id, requiredCursor(args.cursor), args.timeout_s * 1000, call.signal));
-      }),
+      },
     }),
 
     defineTool({
@@ -124,11 +124,11 @@ export function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { openWorldHint: false },
-      run: (args) => guarded(async () => {
+      run: async (args) => {
         if ((args.answer !== undefined) === (args.cancel === true)) return { text: "Pass answer, or cancel: true; not both and not neither.", isError: true };
         const id = sessionId(args.session);
         return renderAnswer(args.dialog, await desk.answer(id, args.dialog, args.answer !== undefined ? { value: args.answer } : { cancel: true }));
-      }),
+      },
     }),
 
     defineTool({
@@ -137,7 +137,7 @@ export function createTools(desk: Desk): ToolSpec[] {
       description: "Stop pi in a session for everyone, as Stop in pi-web does: ends the current run whoever started it, dismisses open questions and withdraws every queued message, the person's included. The reply lists what it withdrew; it does not go back to the person's composer. Does nothing when pi is idle.",
       inputSchema: { type: "object", properties: { session: SESSION }, required: ["session"], additionalProperties: false },
       annotations: { destructiveHint: true, openWorldHint: false },
-      run: (args) => guarded(async () => renderStop(await desk.stop(sessionId(args.session)))),
+      run: async (args) => renderStop(await desk.stop(sessionId(args.session))),
     }),
 
     defineTool({
@@ -162,7 +162,7 @@ export function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { openWorldHint: false },
-      run: (args, call) => guarded(async () => renderNewSession(await desk.newSession(args, call.signal), call)),
+      run: async (args, call) => renderNewSession(await desk.newSession(args, call.signal), call),
     }),
 
     defineTool({
@@ -179,42 +179,38 @@ export function createTools(desk: Desk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { idempotentHint: true, openWorldHint: false },
-      run: (args, call) => guarded(async () => renderWorktree(await desk.newWorktree(args, call.signal))),
+      run: async (args, call) => renderWorktree(await desk.newWorktree(args, call.signal)),
     }),
   ];
 }
 
-let definition: McpServerDefinition | null = null;
-
-export function mcpServer(): McpServerDefinition {
-  definition ??= {
+export function serverFor(desk: Desk): McpServerDefinition {
+  return {
     name: "pi-web",
     title: "pi-web",
     version: packageJson.version,
     instructions: INSTRUCTIONS,
-    tools: createTools(createDesk(piWebPorts(), ledger())),
+    tools: createTools(desk),
+    isToolError: (error) => error instanceof DeskError,
   };
-  return definition;
 }
 
-async function guarded(run: () => Promise<ToolText>): Promise<ToolText> {
-  try {
-    return await run();
-  } catch (error) {
-    if (error instanceof DeskError) return { text: error.message, isError: true };
-    throw error;
-  }
+let server: McpServerDefinition | null = null;
+
+export function mcpServer(): McpServerDefinition {
+  server ??= serverFor(createDesk(piWebPorts(), ledger()));
+  return server;
 }
 
 function sessionId(ref: string): SessionId {
   const id = parseSessionRef(ref);
-  if (!id) throw new DeskError("bad-input", `${JSON.stringify(ref)} is not a pi session id or a pi-web link with ?session=<id>. pi_sessions lists the sessions.`);
+  if (!id) throw new DeskError(`${JSON.stringify(ref)} is not a pi session id or a pi-web link with ?session=<id>. pi_sessions lists the sessions.`);
   return id;
 }
 
 function requiredCursor(text: string): Cursor {
   const cursor = decodeCursor(text);
-  if (!cursor) throw new DeskError("bad-input", "That cursor did not come from this server. Call pi_read to get a fresh one.");
+  if (!cursor) throw new DeskError("That cursor did not come from this server. Call pi_read to get a fresh one.");
   return cursor;
 }
 
