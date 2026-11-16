@@ -22,10 +22,18 @@ export interface JsonRpcError { jsonrpc: "2.0"; id: JsonRpcId | null; error: { c
 export interface JsonRpcResult { jsonrpc: "2.0"; id: JsonRpcId; result: unknown }
 export type JsonRpcResponse = JsonRpcError | JsonRpcResult;
 
-export const RPC = { parse: -32700, invalidRequest: -32600, methodNotFound: -32601, invalidParams: -32602, internal: -32603 } as const;
+export const RPC = { parse: -32700, invalidRequest: -32600, methodNotFound: -32601, invalidParams: -32602, serverError: -32000 } as const;
 
 export function rpcError(id: JsonRpcId | null, code: number, message: string): JsonRpcError {
   return { jsonrpc: "2.0", id, error: { code, message } };
+}
+
+function rpcResult(id: JsonRpcId, result: unknown): JsonRpcResult {
+  return { jsonrpc: "2.0", id, result };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 type ParsedBody =
@@ -37,8 +45,8 @@ function isRpcId(value: unknown): value is JsonRpcId {
 }
 
 function classify(value: unknown): ClientMessage {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return { kind: "invalid", id: null };
-  const message = value as Record<string, unknown>;
+  if (!isRecord(value)) return { kind: "invalid", id: null };
+  const message = value;
   const hasId = Object.hasOwn(message, "id");
   if (typeof message.method === "string") {
     if (!hasId) return { kind: "notification", method: message.method, params: message.params };
@@ -167,9 +175,8 @@ export function validateArgs<S extends InputSchema>(
   schema: S,
   args: unknown,
 ): { ok: true; value: ArgsOf<S> } | { ok: false; error: string } {
-  const given = args === undefined || args === null ? {} : args;
-  if (typeof given !== "object" || Array.isArray(given)) return { ok: false, error: "The arguments must be an object." };
-  const input = given as Record<string, unknown>;
+  const input = args ?? {};
+  if (!isRecord(input)) return { ok: false, error: "The arguments must be an object." };
   const errors: string[] = [];
   for (const key of Object.keys(input)) {
     if (!Object.hasOwn(schema.properties, key)) errors.push(`Unknown argument ${key}. This tool takes ${Object.keys(schema.properties).join(", ")}.`);
@@ -204,54 +211,49 @@ function toolCallResult(text: ToolText) {
 }
 
 async function callTool(server: McpServerDefinition, id: JsonRpcId, params: unknown, call: CallContext): Promise<JsonRpcResponse> {
-  const { name, arguments: args } = (typeof params === "object" && params !== null ? params : {}) as { name?: unknown; arguments?: unknown };
+  const { name, arguments: args }: Record<string, unknown> = isRecord(params) ? params : {};
   const tool = server.tools.find((candidate) => candidate.name === name);
   if (!tool) {
     return rpcError(id, RPC.invalidParams, `Unknown tool ${JSON.stringify(name)}. Tools: ${server.tools.map((t) => t.name).join(", ")}.`);
   }
   const parsed = validateArgs(tool.inputSchema, args);
-  if (!parsed.ok) return { jsonrpc: "2.0", id, result: toolCallResult({ text: `${tool.name}: ${parsed.error}`, isError: true }) };
+  if (!parsed.ok) return rpcResult(id, toolCallResult({ text: `${tool.name}: ${parsed.error}`, isError: true }));
   try {
-    return { jsonrpc: "2.0", id, result: toolCallResult(await tool.run(parsed.value, call)) };
+    return rpcResult(id, toolCallResult(await tool.run(parsed.value, call)));
   } catch (error) {
-    if (server.isToolError(error)) return { jsonrpc: "2.0", id, result: toolCallResult({ text: error.message, isError: true }) };
+    if (server.isToolError(error)) return rpcResult(id, toolCallResult({ text: error.message, isError: true }));
     console.error(`[pi-web] MCP tool ${tool.name} failed:`, error instanceof Error ? error.stack ?? error.message : error);
     const message = error instanceof Error ? error.message : String(error);
-    return { jsonrpc: "2.0", id, result: toolCallResult({ text: `pi-web failed: ${message}`, isError: true }) };
+    return rpcResult(id, toolCallResult({ text: `pi-web failed: ${message}`, isError: true }));
   }
 }
 
-type RequestHandler = (
+function answer(
   server: McpServerDefinition,
   request: Extract<ClientMessage, { kind: "request" }>,
   context: { readonly batch: boolean; readonly call: CallContext },
-) => JsonRpcResponse | Promise<JsonRpcResponse>;
-
-const REQUEST_HANDLERS: Readonly<Record<string, RequestHandler>> = {
-  initialize: (server, request, { batch }) => {
-    if (batch) return rpcError(request.id, RPC.invalidRequest, "initialize must not be part of a batch.");
-    const params = (typeof request.params === "object" && request.params !== null ? request.params : {}) as { protocolVersion?: unknown };
-    return {
-      jsonrpc: "2.0",
-      id: request.id,
-      result: {
-        protocolVersion: negotiateVersion(params.protocolVersion),
+): JsonRpcResponse | Promise<JsonRpcResponse> {
+  switch (request.method) {
+    case "initialize":
+      if (context.batch) return rpcError(request.id, RPC.invalidRequest, "initialize must not be part of a batch.");
+      return rpcResult(request.id, {
+        protocolVersion: negotiateVersion(isRecord(request.params) ? request.params.protocolVersion : undefined),
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: server.name, title: server.title, version: server.version },
         instructions: server.instructions,
-      },
-    };
-  },
-  ping: (_server, request) => ({ jsonrpc: "2.0", id: request.id, result: {} }),
-  "tools/list": (server, request) => ({
-    jsonrpc: "2.0",
-    id: request.id,
-    result: {
-      tools: server.tools.map(({ name, title, description, inputSchema, annotations }) => ({ name, title, description, inputSchema, annotations })),
-    },
-  }),
-  "tools/call": (server, request, { call }) => callTool(server, request.id, request.params, call),
-};
+      });
+    case "ping":
+      return rpcResult(request.id, {});
+    case "tools/list":
+      return rpcResult(request.id, {
+        tools: server.tools.map(({ name, title, description, inputSchema, annotations }) => ({ name, title, description, inputSchema, annotations })),
+      });
+    case "tools/call":
+      return callTool(server, request.id, request.params, context.call);
+    default:
+      return rpcError(request.id, RPC.methodNotFound, `Method not found: ${request.method}`);
+  }
+}
 
 async function dispatch(
   server: McpServerDefinition,
@@ -264,11 +266,8 @@ async function dispatch(
       return null;
     case "invalid":
       return rpcError(message.id, RPC.invalidRequest, "Not a JSON-RPC 2.0 message.");
-    case "request": {
-      const handler = Object.hasOwn(REQUEST_HANDLERS, message.method) ? REQUEST_HANDLERS[message.method] : undefined;
-      if (!handler) return rpcError(message.id, RPC.methodNotFound, `Method not found: ${message.method}`);
-      return handler(server, message, context);
-    }
+    case "request":
+      return answer(server, message, context);
   }
 }
 

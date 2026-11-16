@@ -20,10 +20,10 @@ export async function POST(request: Request): Promise<Response> {
 
 export async function GET(request: Request): Promise<Response> {
   return guardMcpRequest(request)
-    ?? jsonResponse(405, rpcError(null, -32000, "This server opens no event stream. Use POST."), { Allow: "POST" });
+    ?? jsonResponse(405, rpcError(null, RPC.serverError, "This server opens no event stream. Use POST."), { Allow: "POST" });
 }
 
 export async function DELETE(request: Request): Promise<Response> {
   return guardMcpRequest(request)
-    ?? jsonResponse(405, rpcError(null, -32000, "This server keeps no MCP sessions."), { Allow: "POST" });
+    ?? jsonResponse(405, rpcError(null, RPC.serverError, "This server keeps no MCP sessions."), { Allow: "POST" });
 }
