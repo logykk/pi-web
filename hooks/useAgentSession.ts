@@ -16,6 +16,7 @@ import type {
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { AgentCommandError, agentStatusUrl, EXTENSION_REPORTED_CODE, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
+import { isAgentBusyRefusal } from "@/lib/agent-busy-refusal";
 import { createSideChat, SIDE_REFUSAL_MESSAGES } from "@/lib/side-chat-client";
 import { missingCwdFromBody } from "@/lib/missing-cwd";
 import {
@@ -2393,7 +2394,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // Fork: another client (an MCP agent, another tab) started a run before this
       // page heard of it. Queue the text behind that run, as Follow-up does. An
       // edit must branch, so it keeps the refusal.
-      if (sentSessionId && !editEntryId && isPromptRejectedError(e) && e.message.startsWith("Agent is already processing")) {
+      if (sentSessionId && !editEntryId && isAgentBusyRefusal(e)) {
         rpcPromptPendingRef.current = false;
         dropOptimisticUserMessage();
         await sendStreamingPromptRef.current?.(message, "followUp", images);

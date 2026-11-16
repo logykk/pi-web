@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
@@ -13,15 +12,16 @@ const { renderHook } = await import(pathToFileURL(shimPath).href);
 const { useAgentSession } = await jiti.import("./useAgentSession.ts");
 const { clearDraft, getDraft } = await jiti.import("@/lib/draft-store");
 const { deleteSessionViewSnapshot } = await jiti.import("@/lib/session-view-cache");
+const { AGENT_BUSY_REFUSAL } = await jiti.import("@/lib/agent-busy-refusal");
 
 globalThis.document ??= Object.assign(new EventTarget(), { visibilityState: "visible" });
 globalThis.window ??= new EventTarget();
 
-const ALREADY_PROCESSING = "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.";
+const ALREADY_PROCESSING = `${AGENT_BUSY_REFUSAL}. Specify streamingBehavior ('steer' or 'followUp') to queue the message.`;
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const settle = async () => { for (let index = 0; index < 10; index++) await new Promise((resolve) => setImmediate(resolve)); };
 
-async function sendIntoAnotherClientsRun({ followUp, editEntryId = null }) {
+async function sendIntoAnotherClientsRun({ followUp, editEntryId = null, refusal = ALREADY_PROCESSING }) {
   const prompts = [];
   const sources = [];
   globalThis.EventSource = class {
@@ -49,8 +49,8 @@ async function sendIntoAnotherClientsRun({ followUp, editEntryId = null }) {
       // React has rendered what handleSend set before this request went out.
       hook.flush();
       if (!command.streamingBehavior) {
-        running = true;
-        return json({ error: ALREADY_PROCESSING, code: "prompt_rejected", accepted: false }, 500);
+        running = refusal === ALREADY_PROCESSING;
+        return json({ error: refusal, code: "prompt_rejected", accepted: false }, 500);
       }
       return followUp();
     }
@@ -125,7 +125,9 @@ test("an edit that loses the race is refused, never queued into the other client
   assert.equal(result.draft, "person text");
 });
 
-test("pi still words its refusal the way handleSend matches it", async () => {
-  const sdk = await readFile(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js", import.meta.url), "utf8");
-  assert.ok(sdk.includes(`"${ALREADY_PROCESSING}"`), "pi reworded its refusal: update the match in handleSend and ALREADY_PROCESSING here");
+test("a plain prompt refused for another reason is not resent", async () => {
+  const result = await sendIntoAnotherClientsRun({ refusal: "No API key found for faux.", followUp: () => json({ success: true, data: null }) });
+  assert.deepEqual(result.prompts.map(({ message, streamingBehavior }) => [message, streamingBehavior ?? null]), [["person text", null]]);
+  assert.deepEqual(result.notices, [["error", "No API key found for faux."]]);
+  assert.equal(result.draft, "person text");
 });
