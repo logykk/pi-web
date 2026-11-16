@@ -28,11 +28,15 @@ export interface UserEntry {
   readonly time: number;
 }
 
+export type PiQueue =
+  | { readonly kind: "at-rest"; readonly queued: readonly string[] }
+  | { readonly kind: "busy-or-unknown" };
+
 export interface Ledger {
   record(sessionId: string, text: string, delivery: Delivery): SentMessage;
   settle(sendId: string, outcome: Exclude<SendOutcome, { state: "sending" }>): void;
   markReplied(sendId: string): SentMessage;
-  observe(sessionId: string, observed: { readonly userEntries: readonly UserEntry[]; readonly queued: readonly string[] | null; readonly now: number }): void;
+  observe(sessionId: string, observed: { readonly userEntries: readonly UserEntry[]; readonly pi: PiQueue; readonly now: number }): void;
   withdraw(sessionId: string, texts: readonly string[], now: number): ("agent" | "person")[];
   authorOf(sessionId: string, entry: { readonly id: string; readonly time: number }): "agent" | "person" | "user";
   news(sessionId: string, at: number): SentMessage[];
@@ -107,14 +111,14 @@ export function createLedger(now: () => number = Date.now): Ledger {
       if (record.outcome.state === "sending") record.repliedWhileSending = true;
       return { ...record };
     },
-    observe(sessionId, { userEntries, queued, now: at }) {
+    observe(sessionId, { userEntries, pi, now: at }) {
       const sends = sendsOf(sessionId);
       const open = sends.filter(isOpen);
       if (open.length === 0) return;
       const taken = new Set(sends.flatMap((send) => send.placement.kind === "landed" ? [send.placement.entryId] : []));
       land(open, userEntries.filter((entry) => !taken.has(entry.entryId)));
-      if (queued === null) return;
-      const waiting = new Set(queued.map((text) => text.trim()));
+      if (pi.kind !== "at-rest") return;
+      const waiting = new Set(pi.queued.map((text) => text.trim()));
       for (const send of open) {
         if (send.placement.kind !== "open" || send.outcome.state !== "accepted") continue;
         const text = send.text.trim();

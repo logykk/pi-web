@@ -8,7 +8,7 @@ import type { ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiResponse } from "../types";
 import type { LiveSession, PiWebPorts, RunningTool, SessionRow, TranscriptSource, WorktreeOutcome } from "./ports";
 import { isBusy, recheckIn, stepRest, type RestPhase, type RestReason } from "./rest";
-import { createLedger, type Delivery, type Ledger, type SentMessage, type UserEntry } from "./session-ledger";
+import { createLedger, type Delivery, type Ledger, type PiQueue, type SentMessage, type UserEntry } from "./session-ledger";
 import { authorOf, branchSince, contentText, dialogDigest, NO_DIALOGS, type Author, type Cursor, type Delta, type EntryLike } from "./transcript";
 
 /** The generic MCP SDK client gives up at 60 s, nginx too, Cloudflare at 100 s. */
@@ -304,7 +304,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
       }
       const page = ports.page(transcript, id, before ?? null, messages);
       const status = statusOf(id, live);
-      ledger.observe(id, { userEntries: userEntries(transcript), queued: null, now: clock.now() });
+      ledger.observe(id, { userEntries: userEntries(transcript), pi: { kind: "busy-or-unknown" }, now: clock.now() });
       const shown = {
         session: await heading(id, transcript),
         status,
@@ -335,7 +335,8 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
           const live = watch.live();
           const transcript = await source(id, live);
           const status = statusOf(id, live);
-          ledger.observe(id, { userEntries: userEntries(transcript), queued: status.running ? null : [...status.queued.steering, ...status.queued.followUp], now });
+          const pi: PiQueue = status.running ? { kind: "busy-or-unknown" } : { kind: "at-rest", queued: [...status.queued.steering, ...status.queued.followUp] };
+          ledger.observe(id, { userEntries: userEntries(transcript), pi, now });
           const delta = branchSince(transcript, cursor.entryId, MAX_DELTA_ENTRIES);
           const shown = shownMessages(id, transcript, ports.toMessages(delta.entries, id));
           const news = ledger.news(id, cursor.at);
@@ -389,7 +390,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
       const aborted = await waitAtMost(live.abort(), STOP_MS, NEVER);
       if (aborted.kind !== "done") return { kind: "unwinding" };
       const now = clock.now();
-      ledger.observe(id, { userEntries: userEntries(live.transcript()), queued: null, now });
+      ledger.observe(id, { userEntries: userEntries(live.transcript()), pi: { kind: "busy-or-unknown" }, now });
       const texts = [...aborted.value.steering, ...aborted.value.followUp];
       const authors = ledger.withdraw(id, texts, now);
       return { kind: "stopped", withdrawn: texts.map((text, index) => ({ text, author: authors[index] })), status: snapshotStatus(id) };
