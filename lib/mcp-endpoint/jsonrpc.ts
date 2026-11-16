@@ -46,15 +46,14 @@ function isRpcId(value: unknown): value is JsonRpcId {
 
 function classify(value: unknown): ClientMessage {
   if (!isRecord(value)) return { kind: "invalid", id: null };
-  const message = value;
-  const hasId = Object.hasOwn(message, "id");
-  if (typeof message.method === "string") {
-    if (!hasId) return { kind: "notification", method: message.method, params: message.params };
-    if (isRpcId(message.id)) return { kind: "request", id: message.id, method: message.method, params: message.params };
-    return { kind: "invalid", id: null };
+  const id = isRpcId(value.id) ? value.id : null;
+  if (value.jsonrpc !== "2.0") return { kind: "invalid", id };
+  if (typeof value.method === "string") {
+    if (!Object.hasOwn(value, "id")) return { kind: "notification", method: value.method, params: value.params };
+    return id === null ? { kind: "invalid", id } : { kind: "request", id, method: value.method, params: value.params };
   }
-  if (Object.hasOwn(message, "result") || Object.hasOwn(message, "error")) return { kind: "response" };
-  return { kind: "invalid", id: isRpcId(message.id) ? message.id : null };
+  if (Object.hasOwn(value, "result") || Object.hasOwn(value, "error")) return { kind: "response" };
+  return { kind: "invalid", id };
 }
 
 /** 2025-03-26 clients may batch, and that revision says a server MUST accept batches; later revisions dropped batching. */
