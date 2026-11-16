@@ -1,4 +1,4 @@
-import { dispatch, httpReply, parseBody, rpcError, RPC, versionHeaderError } from "@/lib/mcp-endpoint/jsonrpc";
+import { handleMcpBody, rpcError, RPC } from "@/lib/mcp-endpoint/jsonrpc";
 import { guardMcpRequest, jsonResponse, linkBaseFor, MAX_BODY_BYTES, readBoundedBody, shutdownSignal } from "@/lib/mcp-endpoint/http";
 import { mcpServer } from "@/lib/mcp-endpoint/tools";
 import { hasJsonContentType } from "@/lib/request-security";
@@ -13,17 +13,9 @@ export async function POST(request: Request): Promise<Response> {
   const text = await readBoundedBody(request, MAX_BODY_BYTES);
   if (text === null) return jsonResponse(413, rpcError(null, RPC.invalidRequest, `The body is larger than ${MAX_BODY_BYTES} bytes.`));
 
-  const parsed = parseBody(text);
-  if (!parsed.ok) return jsonResponse(400, parsed.error);
-
-  const refused = versionHeaderError(request.headers.get("mcp-protocol-version"), parsed.messages);
-  if (refused) return jsonResponse(400, refused);
-
   const call = { signal: AbortSignal.any([request.signal, shutdownSignal()]), linkBase: linkBaseFor(request) };
-  const server = mcpServer();
-  const responses = await Promise.all(parsed.messages.map((message) => dispatch(server, message, { batch: parsed.batch, call })));
-  const reply = httpReply(parsed, responses);
-  return reply.status === 202 ? new Response(null, { status: 202 }) : jsonResponse(200, reply.body);
+  const reply = await handleMcpBody(mcpServer(), text, request.headers.get("mcp-protocol-version"), call);
+  return reply.status === 202 ? new Response(null, { status: 202 }) : jsonResponse(reply.status, reply.body);
 }
 
 export async function GET(request: Request): Promise<Response> {

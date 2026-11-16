@@ -6,7 +6,7 @@ function isProtocolVersion(value: unknown): value is ProtocolVersion {
   return (PROTOCOL_VERSIONS as readonly unknown[]).includes(value);
 }
 
-export function negotiateVersion(requested: unknown): ProtocolVersion {
+function negotiateVersion(requested: unknown): ProtocolVersion {
   return isProtocolVersion(requested) ? requested : LATEST_PROTOCOL_VERSION;
 }
 
@@ -28,7 +28,7 @@ export function rpcError(id: JsonRpcId | null, code: number, message: string): J
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-export type ParsedBody =
+type ParsedBody =
   | { readonly ok: true; readonly batch: boolean; readonly messages: readonly ClientMessage[] }
   | { readonly ok: false; readonly error: JsonRpcError };
 
@@ -50,7 +50,7 @@ function classify(value: unknown): ClientMessage {
 }
 
 /** 2025-03-26 clients may batch, and that revision says a server MUST accept batches; later revisions dropped batching. */
-export function parseBody(text: string): ParsedBody {
+function parseBody(text: string): ParsedBody {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -67,22 +67,13 @@ export function parseBody(text: string): ParsedBody {
 }
 
 /** No header is 2025-03-26, which this server speaks; `initialize` negotiates in its params instead. */
-export function versionHeaderError(header: string | null, messages: readonly ClientMessage[]): JsonRpcError | null {
+function versionHeaderError(header: string | null, messages: readonly ClientMessage[]): JsonRpcError | null {
   if (header === null) return null;
   const value = header.trim();
   if (isProtocolVersion(value)) return null;
   if (messages.every((message) => message.kind === "request" && message.method === "initialize")) return null;
   const single = messages.length === 1 && messages[0].kind === "request" ? messages[0].id : null;
   return rpcError(single, RPC.invalidRequest, `Unsupported MCP-Protocol-Version: ${value}. This server speaks ${PROTOCOL_VERSIONS.join(", ")}.`);
-}
-
-export function httpReply(
-  parsed: { readonly batch: boolean },
-  responses: readonly (JsonRpcResponse | null)[],
-): { status: 202 } | { status: 200; body: JsonRpcResponse | JsonRpcResponse[] } {
-  const answered = responses.filter((response): response is JsonRpcResponse => response !== null);
-  if (answered.length === 0) return { status: 202 };
-  return { status: 200, body: parsed.batch ? answered : answered[0] };
 }
 
 export type ArgSchema =
@@ -263,7 +254,7 @@ const REQUEST_HANDLERS: Readonly<Record<string, RequestHandler>> = {
   "tools/call": (server, request, { call }) => callTool(server, request.id, request.params, call),
 };
 
-export async function dispatch(
+async function dispatch(
   server: McpServerDefinition,
   message: ClientMessage,
   context: { readonly batch: boolean; readonly call: CallContext },
@@ -280,4 +271,25 @@ export async function dispatch(
       return handler(server, message, context);
     }
   }
+}
+
+export type McpReply =
+  | { readonly status: 202 }
+  | { readonly status: 200 | 400; readonly body: JsonRpcResponse | JsonRpcResponse[] };
+
+/** One POST body, start to end: 202 when no message needs an answer. */
+export async function handleMcpBody(
+  server: McpServerDefinition,
+  text: string,
+  versionHeader: string | null,
+  call: CallContext,
+): Promise<McpReply> {
+  const parsed = parseBody(text);
+  if (!parsed.ok) return { status: 400, body: parsed.error };
+  const refused = versionHeaderError(versionHeader, parsed.messages);
+  if (refused) return { status: 400, body: refused };
+  const responses = await Promise.all(parsed.messages.map((message) => dispatch(server, message, { batch: parsed.batch, call })));
+  const answered = responses.filter((response): response is JsonRpcResponse => response !== null);
+  if (answered.length === 0) return { status: 202 };
+  return { status: 200, body: parsed.batch ? answered : answered[0] };
 }
