@@ -136,7 +136,7 @@ export interface ToolSpec<S extends InputSchema = InputSchema> {
   run(args: ArgsOf<S>, call: CallContext): Promise<ToolText>;
 }
 
-export function defineTool<const S extends InputSchema>(spec: ToolSpec<S>): ToolSpec<S> {
+export function endpointTool<const S extends InputSchema>(spec: ToolSpec<S>): ToolSpec<S> {
   return spec;
 }
 
@@ -195,7 +195,7 @@ export function validateArgs<S extends InputSchema>(
   return errors.length > 0 ? { ok: false, error: errors.join(" ") } : { ok: true, value: value as ArgsOf<S> };
 }
 
-export interface McpServerDefinition {
+export interface EndpointServer {
   readonly name: string;
   readonly title: string;
   readonly version: string;
@@ -209,7 +209,7 @@ function toolCallResult(text: ToolText) {
   return { content: [{ type: "text", text: text.text }], isError: text.isError === true };
 }
 
-async function callTool(server: McpServerDefinition, id: JsonRpcId, params: unknown, call: CallContext): Promise<JsonRpcResponse> {
+async function callTool(server: EndpointServer, id: JsonRpcId, params: unknown, call: CallContext): Promise<JsonRpcResponse> {
   const { name, arguments: args }: Record<string, unknown> = isRecord(params) ? params : {};
   const tool = server.tools.find((candidate) => candidate.name === name);
   if (!tool) {
@@ -228,7 +228,7 @@ async function callTool(server: McpServerDefinition, id: JsonRpcId, params: unkn
 }
 
 function answer(
-  server: McpServerDefinition,
+  server: EndpointServer,
   request: Extract<ClientMessage, { kind: "request" }>,
   context: { readonly batch: boolean; readonly call: CallContext },
 ): JsonRpcResponse | Promise<JsonRpcResponse> {
@@ -255,7 +255,7 @@ function answer(
 }
 
 async function dispatch(
-  server: McpServerDefinition,
+  server: EndpointServer,
   message: ClientMessage,
   context: { readonly batch: boolean; readonly call: CallContext },
 ): Promise<JsonRpcResponse | null> {
@@ -276,7 +276,7 @@ export type McpReply =
 
 /** One POST body, start to end: 202 when no message needs an answer. */
 export async function handleMcpBody(
-  server: McpServerDefinition,
+  server: EndpointServer,
   text: string,
   versionHeader: string | null,
   call: CallContext,

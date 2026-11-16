@@ -31,7 +31,7 @@ function bearerMatches(authorization: string | null, token: string): boolean {
   return match !== null && timingSafeEqual(sha256(match[1]), sha256(token));
 }
 
-export function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+export function noStoreJson(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store", ...headers } });
 }
 
@@ -39,13 +39,13 @@ export function guardMcpRequest(request: Request, env: NodeJS.ProcessEnv = proce
   const token = configuredToken(env);
   if (token === null) {
     // Not 401, which sends some MCP clients into OAuth discovery for a server that has none.
-    return jsonResponse(404, {
+    return noStoreJson(404, {
       error: `pi-web's MCP endpoint is off. Set ${MCP_TOKEN_ENV} (${MIN_TOKEN_LENGTH}+ characters) in pi-web's environment and restart it.`,
     });
   }
-  if (!isApiRequestAllowed(request)) return jsonResponse(403, { error: "Untrusted MCP request" });
+  if (!isApiRequestAllowed(request)) return noStoreJson(403, { error: "Untrusted MCP request" });
   if (!bearerMatches(request.headers.get("authorization"), token)) {
-    return jsonResponse(
+    return noStoreJson(
       401,
       { error: `Send Authorization: Bearer <${MCP_TOKEN_ENV}>.` },
       { "WWW-Authenticate": 'Bearer realm="pi-web", error="invalid_token"' },

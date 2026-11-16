@@ -2,7 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import packageJson from "../../package.json";
 import { TOOL_PRESET_VALUES } from "../tool-presets";
 import { createDesk, createDeskMemory, DeskError, parseSessionRef, WAIT_DEFAULT_MS, WAIT_MAX_MS, type Desk, type SessionId } from "./desk";
-import { defineTool, type McpServerDefinition, type ToolSpec } from "./jsonrpc";
+import { endpointTool, type EndpointServer, type ToolSpec } from "./jsonrpc";
 import { piWebPorts } from "./ports";
 import { processGlobal } from "./process-global";
 import {
@@ -25,7 +25,7 @@ const INSTRUCTIONS = [
 
 function createTools(desk: Desk): ToolSpec[] {
   return [
-    defineTool({
+    endpointTool({
       name: "pi_sessions",
       title: "List pi sessions",
       description: "List pi sessions on this pi-web, newest first: id, state (working, waiting for an answer, idle), title, folder and git branch. Subagent and side-chat sessions are left out. Use it to find the session the person has open.",
@@ -41,7 +41,7 @@ function createTools(desk: Desk): ToolSpec[] {
       run: async (filter) => renderSessionList(await desk.sessions(filter)),
     }),
 
-    defineTool({
+    endpointTool({
       name: "pi_read",
       title: "Read a pi session",
       description: "Read a session's latest messages (or older ones with before), its state and any open extension question, without starting or changing it. Use it to join a session: the reply ends with the cursor for pi_wait and pi_send. Tool output is longer here than in pi_wait replies.",
@@ -59,7 +59,7 @@ function createTools(desk: Desk): ToolSpec[] {
       run: async ({ session, ...page }, call) => renderRead(await desk.read(sessionId(session), page), call.linkBase),
     }),
 
-    defineTool({
+    endpointTool({
       name: "pi_send",
       title: "Send a message to pi",
       description: "Send a message to pi in a session, as pi-web's composer does. Returns as soon as pi has taken it. If pi is busy with anyone's run, the message is queued and goes in when that run would stop; steer: true delivers it at pi's next step instead. Then call pi_wait with the cursor. If this call fails, check with pi_read before sending again: the message may have gone through.",
@@ -81,7 +81,7 @@ function createTools(desk: Desk): ToolSpec[] {
       },
     }),
 
-    defineTool({
+    endpointTool({
       name: "pi_wait",
       title: "Wait for pi",
       description: `Wait until pi in a session is at rest (its run and anything queued are done), an extension asks a question you have not been shown, or timeout_s passes; then report everything new since cursor, the person's messages included. On an idle session it waits for the person to do something. timeout_s 0 reports at once. Each wait lasts at most ${WAIT_MAX_MS / 1000} s; call again with the new cursor while pi works.`,
@@ -102,7 +102,7 @@ function createTools(desk: Desk): ToolSpec[] {
       },
     }),
 
-    defineTool({
+    endpointTool({
       name: "pi_answer",
       title: "Answer an extension's question",
       description: "Answer the question an extension asks (a dialog id from a reply): a choice takes the option's text or 1-based number, a yes/no question true or false, a text box a string; or cancel: true. The person sees the same question in pi-web and the first answer counts. Returns at once; call pi_wait to follow pi.",
@@ -124,7 +124,7 @@ function createTools(desk: Desk): ToolSpec[] {
       },
     }),
 
-    defineTool({
+    endpointTool({
       name: "pi_stop",
       title: "Stop pi",
       description: "Stop pi in a session for everyone, as Stop in pi-web does: ends the current run whoever started it, dismisses open questions and withdraws every queued message, the person's included. The reply lists what it withdrew; it does not go back to the person's composer. Does nothing when pi is idle.",
@@ -133,7 +133,7 @@ function createTools(desk: Desk): ToolSpec[] {
       run: async ({ session }) => renderStop(await desk.stop(sessionId(session))),
     }),
 
-    defineTool({
+    endpointTool({
       name: "pi_new_session",
       title: "Start a pi session",
       description: "Start a new pi session in a folder on pi-web's machine and send it a first message. Returns once pi has taken the message, with the session id, a pi-web link to give the person, and a cursor for pi_wait.",
@@ -158,7 +158,7 @@ function createTools(desk: Desk): ToolSpec[] {
       run: async (request, call) => renderNewSession(await desk.newSession(request, call.signal), call.linkBase),
     }),
 
-    defineTool({
+    endpointTool({
       name: "pi_new_worktree",
       title: "Create a git worktree",
       description: "Create a git worktree for a branch of the repository that contains project, at <repo>-worktrees/<branch>. Checks the branch out if it exists, else creates it from the main checkout's HEAD (or an already-fetched origin/<branch>); nothing is fetched. Safe to repeat: an existing worktree of the branch is returned. Start pi there with pi_new_session.",
@@ -177,7 +177,7 @@ function createTools(desk: Desk): ToolSpec[] {
   ];
 }
 
-export function serverFor(desk: Desk): McpServerDefinition {
+export function serverFor(desk: Desk): EndpointServer {
   return {
     name: "pi-web",
     title: "pi-web",
@@ -188,9 +188,9 @@ export function serverFor(desk: Desk): McpServerDefinition {
   };
 }
 
-let server: McpServerDefinition | null = null;
+let server: EndpointServer | null = null;
 
-export function mcpServer(): McpServerDefinition {
+export function mcpServer(): EndpointServer {
   server ??= serverFor(createDesk(piWebPorts(), processGlobal("desk-memory", createDeskMemory)));
   return server;
 }
