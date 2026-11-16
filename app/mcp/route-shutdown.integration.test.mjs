@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
+import { withEnv } from "../../lib/mcp-endpoint/test-env.mjs";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": process.cwd() }, interopDefault: true });
 const { POST } = await jiti.import("./route.ts");
@@ -19,16 +20,8 @@ test("pi-web stopping ends a pending pi_wait at once", async (t) => {
     { type: "message", id: "u1", parentId: null, timestamp: stamp, message: { role: "user", content: "hi" } },
   ];
   await writeFile(join(agentDir, "sessions", "s", `${stamp.replace(/[:.]/g, "-")}_mcp-shutdown.jsonl`), `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
-  const previous = { dir: process.env.PI_CODING_AGENT_DIR, token: process.env.PI_WEB_MCP_TOKEN };
-  process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.env.PI_WEB_MCP_TOKEN = TOKEN;
-  t.after(async () => {
-    for (const [key, value] of [["PI_CODING_AGENT_DIR", previous.dir], ["PI_WEB_MCP_TOKEN", previous.token]]) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    await rm(agentDir, { recursive: true, force: true });
-  });
+  withEnv(t, { PI_CODING_AGENT_DIR: agentDir, PI_WEB_MCP_TOKEN: TOKEN });
+  t.after(() => rm(agentDir, { recursive: true, force: true }));
 
   const started = Date.now();
   const pending = POST(new Request("http://127.0.0.1:30999/mcp", {
