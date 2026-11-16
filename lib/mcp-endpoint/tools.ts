@@ -10,6 +10,7 @@ import {
 import { defineTool, type CallContext, type McpServerDefinition, type ToolSpec, type ToolText } from "./jsonrpc";
 import { piWebPorts, type SessionRow } from "./ports";
 import { processGlobal } from "./process-global";
+import { isBusy } from "./rest";
 import type { SentMessage } from "./session-ledger";
 import { BUDGETS, decodeCursor, encodeCursor, renderMessages, type Cursor } from "./transcript";
 
@@ -337,7 +338,7 @@ function waitHeadline(result: WaitResult): string {
     case "now":
       return "Now:";
     case "timeout":
-      return status.running || status.subagentsActive || status.sendsInFlight > 0
+      return isBusy(status)
         ? `pi is still working after ${seconds} s. Call pi_wait again with the new cursor.`
         : `Nothing new after ${seconds} s; pi is idle and the person may be away. Call pi_wait again to keep waiting.`;
   }

@@ -8,17 +8,19 @@
 export const SETTLE_MS = 600;
 export const TICK_MS = 1_000;
 
+/** pi works for someone: a run, subagents that will report back, or the agent's own send on its way. */
+export function isBusy(status: { readonly running: boolean; readonly subagentsActive: boolean; readonly sendsInFlight: number }): boolean {
+  return status.running || status.subagentsActive || status.sendsInFlight > 0;
+}
+
 export interface RestObservation {
   readonly now: number;
   readonly deadline: number;
   readonly aborted: boolean;
-  readonly running: boolean;
-  readonly subagentsActive: boolean;
-  readonly sendsInFlight: number;
+  readonly busy: boolean;
   readonly hasNews: boolean;
-  readonly dialogs: string;
-  readonly dialogCount: number;
-  readonly shownDialogs: string;
+  /** An open dialog the agent's cursor has not seen. */
+  readonly unseenDialog: boolean;
 }
 
 export type RestReason =
@@ -32,21 +34,22 @@ export type RestPhase =
   | { readonly kind: "settling"; readonly since: number }
   | { readonly kind: "done"; readonly reason: RestReason };
 
-function next(phase: RestPhase, obs: RestObservation): RestPhase {
+type OpenPhase = Exclude<RestPhase, { kind: "done" }>;
+
+function next(phase: OpenPhase, obs: RestObservation): RestPhase {
   if (obs.aborted) return { kind: "done", reason: "aborted" };
-  if (obs.dialogCount > 0 && obs.dialogs !== obs.shownDialogs) return { kind: "done", reason: "dialog" };
-  if (obs.running || obs.subagentsActive || obs.sendsInFlight > 0 || !obs.hasNews) return { kind: "watching" };
+  if (obs.unseenDialog) return { kind: "done", reason: "dialog" };
+  if (obs.busy || !obs.hasNews) return { kind: "watching" };
   if (phase.kind !== "settling") return { kind: "settling", since: obs.now };
   return obs.now - phase.since >= SETTLE_MS ? { kind: "done", reason: "settled" } : phase;
 }
 
-export function stepRest(phase: RestPhase, obs: RestObservation): RestPhase {
-  if (phase.kind === "done") return phase;
+export function stepRest(phase: OpenPhase, obs: RestObservation): RestPhase {
   const stepped = next(phase, obs);
   return stepped.kind !== "done" && obs.now >= obs.deadline ? { kind: "done", reason: "timeout" } : stepped;
 }
 
-export function recheckIn(phase: RestPhase, obs: Pick<RestObservation, "now" | "deadline">): number {
+export function recheckIn(phase: OpenPhase, obs: Pick<RestObservation, "now" | "deadline">): number {
   const until = [TICK_MS, obs.deadline - obs.now];
   if (phase.kind === "settling") until.push(phase.since + SETTLE_MS - obs.now);
   return Math.max(0, Math.min(...until));

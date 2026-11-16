@@ -7,7 +7,7 @@ import { toolInputPreview } from "../tool-fields";
 import type { ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiResponse } from "../types";
 import type { LiveSession, PiWebPorts, RunningTool, SessionRow, TranscriptSource, WorktreeOutcome } from "./ports";
-import { recheckIn, stepRest, type RestPhase, type RestReason } from "./rest";
+import { isBusy, recheckIn, stepRest, type RestPhase, type RestReason } from "./rest";
 import { createLedger, type Delivery, type Ledger, type SentMessage, type UserEntry } from "./session-ledger";
 import { authorOf, branchSince, contentText, dialogDigest, NO_DIALOGS, type Author, type Cursor, type Delta, type EntryLike } from "./transcript";
 
@@ -334,10 +334,9 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
           const news = ledger.news(id, cursor.at);
           const dialogs = dialogDigest(status.dialogs.map((dialog) => dialog.id));
           phase = stepRest(phase, {
-            now, deadline, aborted: signal.aborted,
-            running: status.running, subagentsActive: status.subagentsActive, sendsInFlight: status.sendsInFlight,
+            now, deadline, aborted: signal.aborted, busy: isBusy(status),
             hasNews: shown.messages.length > 0 || delta.kind !== "since" || news.length > 0,
-            dialogs, dialogCount: status.dialogs.length, shownDialogs: cursor.dialogs,
+            unseenDialog: dialogs !== NO_DIALOGS && dialogs !== cursor.dialogs,
           });
           if (phase.kind === "done") {
             return {
