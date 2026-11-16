@@ -114,23 +114,20 @@ export interface PiWebPorts {
     { messages: AgentMessage[]; entryIds: string[]; hasMore: boolean; oldestEntryId: string | null };
   listSessions(): Promise<SessionRow[]>;
   subagentsActive(id: string): boolean;
-  project(cwd: string): Promise<{ branch: string | null; isWorktree: boolean }>;
+  /** `root`: the project the folder belongs to, a worktree's main checkout for a worktree. */
+  project(cwd: string): Promise<{ root: string; branch: string | null }>;
   untrusted(cwd: string): boolean;
-  hold(id: string): void;
+  /**
+   * A session-liveness provider for the session id: while `isActive()`, no idle timeout reaps its
+   * wrapper, across wrapper replacement; Stop's forced shutdown still wins. `isActive` must never
+   * throw: a throwing provider pins the session.
+   */
+  registerLiveness(id: string, isActive: () => boolean): () => void;
   addWorktree(dir: string, branch: string): Promise<WorktreeOutcome>;
   directory(path: string): Promise<DirectoryLookup>;
 }
 
-export const HOLD_MS = 30 * 60_000;
-const HOLD_PROVIDER_NAME = "pi-web-mcp-endpoint";
-
-const HOLDS = Symbol.for("pi-web.mcp-endpoint.holds");
-const WORKTREE_JOBS = Symbol.for("pi-web.mcp-endpoint.worktree-jobs");
-
-function shared<T>(key: symbol, create: () => T): T {
-  const store = globalThis as unknown as Record<symbol, T | undefined>;
-  return store[key] ??= create();
-}
+const LIVENESS_PROVIDER_NAME = "pi-web-mcp-endpoint";
 
 function asEntries(entries: readonly EntryLike[]): SessionEntry[] {
   return entries as unknown as SessionEntry[];
@@ -204,7 +201,7 @@ export function piWebPorts(): PiWebPorts {
 
     async project(cwd) {
       const info = await resolveProject(cwd);
-      return { branch: info.branch, isWorktree: info.isWorktree };
+      return { root: info.projectRoot, branch: info.branch };
     },
 
     untrusted(cwd) {
@@ -212,27 +209,7 @@ export function piWebPorts(): PiWebPorts {
       return status.requiresTrust && !status.trusted;
     },
 
-    hold(id) {
-      const holds = shared(HOLDS, () => new Map<string, { touchedAt: number; dispose: () => void }>());
-      const now = Date.now();
-      for (const [other, hold] of holds) {
-        if (now - hold.touchedAt < HOLD_MS) continue;
-        hold.dispose();
-        holds.delete(other);
-      }
-      const existing = holds.get(id);
-      if (existing) {
-        existing.touchedAt = now;
-        return;
-      }
-      const hold = { touchedAt: now, dispose: () => {} };
-      hold.dispose = registerSessionLivenessProvider({
-        name: HOLD_PROVIDER_NAME,
-        sessionId: id,
-        isActive: () => Date.now() - hold.touchedAt < HOLD_MS,
-      });
-      holds.set(id, hold);
-    },
+    registerLiveness: (id, isActive) => registerSessionLivenessProvider({ name: LIVENESS_PROVIDER_NAME, sessionId: id, isActive }),
 
     async directory(path) {
       let real: string;
@@ -244,23 +221,13 @@ export function piWebPorts(): PiWebPorts {
       return (await stat(real)).isDirectory() ? { kind: "directory", path: real } : { kind: "file", path: real };
     },
 
-    addWorktree(dir, branch) {
-      // A checkout can take minutes. A repeat during it must join it, not read git's half-made
-      // worktree as "exists"; a repeat after it lands in WorktreeBranchInUseError.
-      const jobs = shared(WORKTREE_JOBS, () => new Map<string, Promise<WorktreeOutcome>>());
-      const key = `${dir}\0${branch.trim()}`;
-      const running = jobs.get(key);
-      if (running) return running;
-      const job = addWorktree(dir, branch).then(
-        (created): WorktreeOutcome => ({ kind: "created", path: created.path, branch: created.branch }),
-        (error: unknown): WorktreeOutcome => {
-          if (!(error instanceof WorktreeBranchInUseError)) throw error;
-          return { kind: error.missing ? "held-by-missing" : "exists", path: error.worktreePath, branch: error.branch };
-        },
-      ).finally(() => jobs.delete(key));
-      jobs.set(key, job);
-      return job;
-    },
+    addWorktree: (dir, branch) => addWorktree(dir, branch).then(
+      (created): WorktreeOutcome => ({ kind: "created", path: created.path, branch: created.branch }),
+      (error: unknown): WorktreeOutcome => {
+        if (!(error instanceof WorktreeBranchInUseError)) throw error;
+        return { kind: error.missing ? "held-by-missing" : "exists", path: error.worktreePath, branch: error.branch };
+      },
+    ),
   };
 }
 

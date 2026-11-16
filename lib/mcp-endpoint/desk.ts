@@ -19,6 +19,8 @@ export const CREATE_MS = WAIT_MAX_MS - SEND_ACCEPT_MS - 5_000;
 export const WORKTREE_MS = 45_000;
 export const STOP_MS = 20_000;
 export const STOP_SEND_GRACE_MS = 5_000;
+/** How long after its last touch the endpoint keeps a session loaded, past the 10-minute idle timeout. */
+export const HOLD_MS = 30 * 60_000;
 export const MAX_DELTA_ENTRIES = 400;
 
 export type SessionId = string & { readonly __brand: "SessionId" };
@@ -168,6 +170,29 @@ function userEntries(transcript: TranscriptSource): UserEntry[] {
 }
 
 export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Date): Desk {
+  const holds = new Map<string, { touchedAt: number; dispose: () => void }>();
+  // A checkout can take minutes. A repeat during it must join it, not read git's half-made
+  // worktree as "exists"; a repeat after it lands in WorktreeBranchInUseError.
+  const checkouts = new Map<string, Promise<WorktreeOutcome>>();
+
+  /** Keeps a session loaded until HOLD_MS after its last touch; any touch lets expired holds go. */
+  function hold(id: string): void {
+    const now = clock.now();
+    for (const [other, held] of holds) {
+      if (now - held.touchedAt < HOLD_MS) continue;
+      held.dispose();
+      holds.delete(other);
+    }
+    const existing = holds.get(id);
+    if (existing) {
+      existing.touchedAt = now;
+      return;
+    }
+    const held = { touchedAt: now, dispose: () => {} };
+    held.dispose = ports.registerLiveness(id, () => clock.now() - held.touchedAt < HOLD_MS);
+    holds.set(id, held);
+  }
+
   function statusOf(id: string, live: LiveSession | null): SessionStatus {
     return {
       loaded: live !== null,
@@ -275,7 +300,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
 
     async send(id, text, { steer, cursor }, signal) {
       const transcript = await source(id, ports.live(id));
-      ports.hold(id);
+      hold(id);
       const from = cursor ?? { entryId: transcript.getLeafId(), dialogs: NO_DIALOGS, at: clock.now() };
       return deliver(id, text, steer ? "steer" : "followUp", from, signal);
     },
@@ -286,7 +311,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       const watch = new SessionWatch(ports, id);
       try {
         await source(id, watch.live());
-        ports.hold(id);
+        hold(id);
         let phase: RestPhase = { kind: "watching" };
         for (;;) {
           const now = clock.now();
@@ -333,7 +358,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       const dialog = toDialog(request);
       const { response, shown } = toResponse(dialog, answer);
       await live.answer(response);
-      ports.hold(id);
+      hold(id);
       return { outcome: "sent", dialog, shown };
     },
 
@@ -344,7 +369,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
         await sleep(100);
       }
       const live = ports.live(id);
-      if (live) ports.hold(id);
+      if (live) hold(id);
       const status = statusOf(id, live);
       if (status.sendsInFlight > 0) return { kind: "send-pending", status };
       if (!live || (!status.running && status.dialogs.length === 0)) return { kind: "idle", status };
@@ -374,7 +399,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
         throw new DeskError("bad-input", `pi-web could not start a session in ${dir}: ${errorText(error)}`);
       }
       if (!session) throw new DeskError("unavailable", `pi-web was still building the session after ${CREATE_MS / 1000} s; nothing was sent. Try again.`);
-      ports.hold(session.id);
+      hold(session.id);
       const transcript = session.transcript();
       const send = await deliver(session.id, message, "followUp", { entryId: transcript.getLeafId(), dialogs: NO_DIALOGS, at: clock.now() }, signal);
       return {
@@ -388,8 +413,14 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
 
     async newWorktree({ project, branch }, signal) {
       const dir = await directoryOf(project);
+      const key = `${(await ports.project(dir)).root}\0${branch.trim()}`;
+      let checkout = checkouts.get(key);
+      if (!checkout) {
+        checkout = ports.addWorktree(dir, branch).finally(() => checkouts.delete(key));
+        checkouts.set(key, checkout);
+      }
       try {
-        return await within(ports.addWorktree(dir, branch), WORKTREE_MS, signal) ?? { kind: "creating", branch: branch.trim() };
+        return await within(checkout, WORKTREE_MS, signal) ?? { kind: "creating", branch: branch.trim() };
       } catch (error) {
         throw new DeskError("bad-input", `git could not create the worktree: ${errorText(error)}`);
       }
