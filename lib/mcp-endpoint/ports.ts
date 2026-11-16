@@ -110,7 +110,8 @@ export interface PiWebPorts {
   create(cwd: string, options: NewSessionOptions): Promise<LiveSession>;
   saved(id: string): Promise<TranscriptSource | null>;
   toMessages(entries: readonly EntryLike[], sessionId: string): { messages: AgentMessage[]; entryIds: string[] };
-  page(source: TranscriptSource, sessionId: string, endId: string | null, tail: number, before: boolean):
+  /** The newest `tail` entries of the branch, up to the leaf or up to (without) `before`. */
+  page(source: TranscriptSource, sessionId: string, before: string | null, tail: number):
     { messages: AgentMessage[]; entryIds: string[]; hasMore: boolean; oldestEntryId: string | null };
   listSessions(): Promise<SessionRow[]>;
   subagentsActive(id: string): boolean;
@@ -173,9 +174,9 @@ export function piWebPorts(): PiWebPorts {
       return { messages: context.messages, entryIds: context.entryIds };
     },
 
-    page(source, sessionId, endId, tail, before) {
-      const context = buildSessionContext(asEntries(source.getEntries()), endId ?? source.getLeafId(), {
-        tail, excludeLeaf: before, deferThinking: true, deferToolResultImages: true, sessionId,
+    page(source, sessionId, before, tail) {
+      const context = buildSessionContext(asEntries(source.getEntries()), before ?? source.getLeafId(), {
+        tail, excludeLeaf: before !== null, deferThinking: true, deferToolResultImages: true, sessionId,
       });
       return { messages: context.messages, entryIds: context.entryIds, hasMore: context.hasMore, oldestEntryId: context.oldestEntryId };
     },

@@ -286,7 +286,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       if (before !== undefined && !transcript.getEntry(before)) {
         throw new DeskError("bad-input", `${before} is not an entry of session ${id}. Use the id from an \`older:\` line.`);
       }
-      const page = ports.page(transcript, id, before ?? null, messages, before !== undefined);
+      const page = ports.page(transcript, id, before ?? null, messages);
       const status = snapshotStatus(id);
       ledger.observe(id, { userEntries: userEntries(transcript), queued: null, now: clock.now() });
       const shown = {
