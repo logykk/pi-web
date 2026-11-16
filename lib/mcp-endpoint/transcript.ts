@@ -74,22 +74,13 @@ export function branchSince(reader: BranchReader, cursorEntryId: string | null, 
   return delta("moved", chainFrom(reader, leafId, (entry) => cursorAncestors.has(entry.id)).chain);
 }
 
-export type Author = "agent" | "person" | "user" | "pi" | "shell" | "extension" | "summary";
+/** Who wrote a user message, or a summary entry. Any other message's role says who wrote it. */
+export type Author = "agent" | "person" | "user" | "summary";
 
-/** `userAuthor`: who wrote a user message, which only the ledger knows. */
-export function authorOf(message: AgentMessage, entryType: string, userAuthor: () => Extract<Author, "agent" | "person" | "user">): Author {
+/** `userAuthor`: who wrote a user message, which only the ledger knows. Null where the role says who. */
+export function authorOf(message: AgentMessage, entryType: string, userAuthor: () => Exclude<Author, "summary">): Author | null {
   if (entryType === "branch_summary" || entryType === "compaction") return "summary";
-  switch (message.role) {
-    case "user":
-      return userAuthor();
-    case "assistant":
-    case "toolResult":
-      return "pi";
-    case "bashExecution":
-      return "shell";
-    case "custom":
-      return "extension";
-  }
+  return message.role === "user" ? userAuthor() : null;
 }
 
 export function contentText(content: unknown): string {
@@ -137,7 +128,7 @@ function resultLine(result: ToolResultMessage | undefined, budget: RenderBudget,
 
 export function renderMessages(
   messages: readonly AgentMessage[],
-  authors: readonly Author[],
+  authors: readonly (Author | null)[],
   budget: RenderBudget,
   options: { readonly endsAtNewest: boolean },
 ): string[] {

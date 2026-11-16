@@ -63,7 +63,7 @@ export interface SessionHeading {
 
 export interface LabeledMessages {
   readonly messages: readonly AgentMessage[];
-  readonly authors: readonly Author[];
+  readonly authors: readonly (Author | null)[];
 }
 
 export interface ReadPage extends LabeledMessages {
@@ -215,7 +215,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
   /** What the chat shows of converted messages, each with its author as the ledger last observed. */
   function shownMessages(id: string, transcript: TranscriptSource, converted: { messages: AgentMessage[]; entryIds: string[] }): LabeledMessages {
     const messages: AgentMessage[] = [];
-    const authors: Author[] = [];
+    const authors: (Author | null)[] = [];
     converted.messages.forEach((message, index) => {
       if (isHiddenCustomMessage(message)) return;
       const entryId = converted.entryIds[index];
