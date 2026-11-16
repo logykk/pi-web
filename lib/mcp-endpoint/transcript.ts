@@ -74,10 +74,8 @@ export function branchSince(reader: BranchReader, cursorEntryId: string | null, 
   return delta("moved", chainFrom(reader, leafId, (entry) => cursorAncestors.has(entry.id)).chain);
 }
 
-/** Who wrote a user message, or a summary entry. Any other message's role says who wrote it. */
 export type Author = "agent" | "person" | "user" | "summary";
 
-/** `userAuthor`: who wrote a user message, which only the ledger knows. Null where the role says who. */
 export function authorOf(message: AgentMessage, entryType: string, userAuthor: () => Exclude<Author, "summary">): Author | null {
   if (entryType === "branch_summary" || entryType === "compaction") return "summary";
   return message.role === "user" ? userAuthor() : null;

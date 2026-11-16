@@ -201,7 +201,6 @@ export interface EndpointServer {
   readonly version: string;
   readonly instructions: string;
   readonly tools: readonly ToolSpec[];
-  /** An error whose message is the tool's answer to the model; any other throw is logged as pi-web's failure. */
   isToolError(error: unknown): error is Error;
 }
 
@@ -274,7 +273,6 @@ export type McpReply =
   | { readonly status: 202 }
   | { readonly status: 200 | 400; readonly body: JsonRpcResponse | JsonRpcResponse[] };
 
-/** One POST body, from its text to the HTTP status and JSON body. 202 means no message needs an answer. */
 export async function handleMcpBody(
   server: EndpointServer,
   text: string,

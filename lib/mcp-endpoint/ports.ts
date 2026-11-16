@@ -21,7 +21,6 @@ import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiRequest, Exte
 import { addWorktree, resolveProject, WorktreeBranchInUseError } from "../worktree";
 import type { BranchReader, EntryLike } from "./transcript";
 
-/** The wrapper's events as the endpoint reads them: what ends a watch, what it reports, what wakes it. */
 export type SessionEvent =
   | { readonly kind: "ended" }
   | { readonly kind: "prompt-error"; readonly message: string }
@@ -29,7 +28,6 @@ export type SessionEvent =
   | { readonly kind: "streaming" }
   | { readonly kind: "other" };
 
-/** A top-level tool call under way; `elapsedMs` on the wrapper's clock. */
 export interface RunningTool {
   readonly toolName: string;
   readonly args: unknown;
@@ -53,7 +51,6 @@ export interface LiveSession {
    * startup notices; a wrapper an extension shut down delivers `ended` at once.
    */
   onEvent(listener: (event: SessionEvent) => void): () => void;
-  /** The blocking dialogs and open custom panels the wrapper holds, read from a fresh replay. */
   openDialogs(): BlockingExtensionUiRequest[];
   /**
    * The top-level tool calls under way, from a fresh replay, oldest first: calls a tool makes itself
@@ -98,7 +95,6 @@ export type WorktreeOutcome =
   | { readonly kind: "exists"; readonly path: string; readonly branch: string }
   | { readonly kind: "held-by-missing"; readonly path: string; readonly branch: string };
 
-/** What is at a path, `~` expanded and resolved as the directory picker does; a directory by its realpath. */
 export type DirectoryLookup =
   | { readonly kind: "directory"; readonly path: string }
   | { readonly kind: "missing"; readonly path: string }
@@ -110,12 +106,10 @@ export interface PiWebPorts {
   create(cwd: string, options: NewSessionOptions): Promise<LiveSession>;
   saved(id: string): Promise<TranscriptSource | null>;
   toMessages(entries: readonly EntryLike[], sessionId: string): { messages: AgentMessage[]; entryIds: string[] };
-  /** The newest `tail` entries of the branch, up to the leaf or up to (without) `before`. */
   page(source: TranscriptSource, sessionId: string, before: string | null, tail: number):
     { messages: AgentMessage[]; entryIds: string[]; hasMore: boolean; oldestEntryId: string | null };
   listSessions(): Promise<SessionRow[]>;
   subagentsActive(id: string): boolean;
-  /** `root`: the project the folder belongs to, a worktree's main checkout for a worktree. */
   project(cwd: string): Promise<{ root: string; branch: string | null }>;
   untrusted(cwd: string): boolean;
   /**

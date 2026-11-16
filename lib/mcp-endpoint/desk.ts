@@ -19,7 +19,6 @@ export const CREATE_MS = WAIT_MAX_MS - SEND_ACCEPT_MS - 5_000;
 export const WORKTREE_MS = 45_000;
 export const STOP_MS = 20_000;
 export const STOP_SEND_GRACE_MS = 5_000;
-/** How long after its last touch the endpoint keeps a session loaded, past the 10-minute idle timeout. */
 export const HOLD_MS = 30 * 60_000;
 export const MAX_DELTA_ENTRIES = 400;
 
@@ -71,7 +70,6 @@ export interface ReadPage extends LabeledMessages {
   readonly oldestEntryId: string | null;
 }
 
-/** The latest page carries the agent's next cursor; an older page leaves its cursor alone. */
 export type ReadResult =
   | { readonly kind: "latest"; readonly session: SessionHeading; readonly status: SessionStatus; readonly page: ReadPage; readonly cursor: Cursor }
   | { readonly kind: "older"; readonly session: SessionHeading; readonly status: SessionStatus; readonly page: ReadPage };
@@ -119,7 +117,6 @@ export interface NewSessionResult {
 
 export type NewWorktreeResult = WorktreeOutcome | { readonly kind: "creating"; readonly branch: string };
 
-/** A message for the model: the tool answers with it as an `isError` result. */
 export class DeskError extends Error {}
 
 export interface Clock {
@@ -171,15 +168,12 @@ function userEntries(transcript: TranscriptSource): UserEntry[] {
     .map((entry) => ({ entryId: entry.id, text: contentText(entry.message?.content), time: entryTime(entry) }));
 }
 
-/** What the desk keeps between calls. pi-web keeps one per process, so a dev hot reload builds a new desk around it. */
 export interface DeskMemory {
   readonly ledger: Ledger;
-  /** The sessions the endpoint keeps loaded, by session id. */
   readonly holds: Map<string, { touchedAt: number; dispose: () => void }>;
   /**
-   * Checkouts under way, by repo root and branch. A checkout can take minutes. A repeat during it
-   * must join it, not read git's half-made worktree as "exists"; a repeat after it lands in
-   * WorktreeBranchInUseError.
+   * A checkout can take minutes. A repeat during it must join it, not read git's half-made
+   * worktree as "exists".
    */
   readonly checkouts: Map<string, Promise<WorktreeOutcome>>;
 }
@@ -190,7 +184,6 @@ export function createDeskMemory(): DeskMemory {
 
 export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: DeskMemory, clock: Clock = Date): Desk {
 
-  /** Keeps a session loaded until HOLD_MS after its last touch; any touch lets expired holds go. */
   function hold(id: string): void {
     const now = clock.now();
     for (const [other, held] of holds) {
@@ -230,7 +223,6 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
     return found;
   }
 
-  /** What the chat shows of converted messages, each with its author as the ledger last observed. */
   function shownMessages(id: string, transcript: TranscriptSource, converted: { messages: AgentMessage[]; entryIds: string[] }): LabeledMessages {
     const messages: AgentMessage[] = [];
     const authors: (Author | null)[] = [];
@@ -244,7 +236,6 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
     return { messages, authors };
   }
 
-  /** An existing folder on pi-web's machine, by its realpath, as the directory picker selects it. */
   async function directoryOf(input: string): Promise<string> {
     const path = input.trim();
     if (path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) {
@@ -379,8 +370,6 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
 
     async stop(id) {
       await source(id, ports.live(id));
-      // Before the wrapper is resolved: the agent's own send may still be building it, and an
-      // abort before its prompt lands stops nothing.
       for (const until = clock.now() + STOP_SEND_GRACE_MS; ledger.inFlight(id) > 0 && clock.now() < until;) {
         await sleep(100);
       }
@@ -590,7 +579,6 @@ function sleep(ms: number): Promise<void> {
 
 type Bounded<T> = { readonly kind: "done"; readonly value: T } | { readonly kind: "timeout" } | { readonly kind: "aborted" };
 
-/** Waits for `promise` up to `ms` or the signal, whichever comes first; a rejection rejects. Nothing is cancelled. */
 async function within<T>(promise: Promise<T>, ms: number, signal: AbortSignal): Promise<Bounded<T>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort = () => {};

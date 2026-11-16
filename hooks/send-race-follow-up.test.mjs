@@ -46,7 +46,6 @@ async function sendIntoAnotherClientsRun({ followUp, editEntryId = null, refusal
       const command = JSON.parse(init.body);
       if (command.type !== "prompt") return json({ success: true, data: null });
       prompts.push(command);
-      // React has rendered what handleSend set before this request went out.
       hook.flush();
       if (!command.streamingBehavior) {
         running = refusal === ALREADY_PROCESSING;

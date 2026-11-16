@@ -8,7 +8,6 @@
 export const SETTLE_MS = 600;
 export const TICK_MS = 1_000;
 
-/** pi works for someone: a run, subagents that will report back, or the agent's own send on its way. */
 export function isBusy(status: { readonly running: boolean; readonly subagentsActive: boolean; readonly sendsInFlight: number }): boolean {
   return status.running || status.subagentsActive || status.sendsInFlight > 0;
 }
@@ -19,7 +18,6 @@ export interface RestObservation {
   readonly aborted: boolean;
   readonly busy: boolean;
   readonly hasNews: boolean;
-  /** An open dialog the agent's cursor has not seen. */
   readonly unseenDialog: boolean;
 }
 

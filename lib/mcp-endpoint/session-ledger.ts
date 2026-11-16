@@ -6,7 +6,6 @@ export type SendOutcome =
   | { readonly state: "parked"; readonly at: number }
   | { readonly state: "refused"; readonly reason: string; readonly at: number };
 
-/** Where a send stands in the transcript; it leaves `open` once, to a user entry or to nowhere. */
 export type Placement =
   | { readonly kind: "open" }
   | { readonly kind: "landed"; readonly entryId: string }
@@ -32,19 +31,10 @@ export interface UserEntry {
 export interface Ledger {
   record(sessionId: string, text: string, delivery: Delivery): SentMessage;
   settle(sendId: string, outcome: Exclude<SendOutcome, { state: "sending" }>): void;
-  /** pi_send replied now; a send still on its way is remembered as such. Returns the send as replied. */
   markReplied(sendId: string): SentMessage;
-  /**
-   * Lands open sends on the session's user entries. `queued`: pi's queue while pi is at rest,
-   * null while it works or when the caller cannot tell; with it, an accepted send that is neither
-   * landed nor queued goes missing.
-   */
   observe(sessionId: string, observed: { readonly userEntries: readonly UserEntry[]; readonly queued: readonly string[] | null; readonly now: number }): void;
-  /** Texts pi withdrew from its queue: each is the agent's when an open send of that text matches, which goes missing. */
   withdraw(sessionId: string, texts: readonly string[], now: number): ("agent" | "person")[];
-  /** Who wrote a user entry: a send landed there, or anyone after (person) or before (user) the ledger began. */
   authorOf(sessionId: string, entry: { readonly id: string; readonly time: number }): "agent" | "person" | "user";
-  /** Late refusals and missing sends after `at`, for every cursor older than the event. */
   news(sessionId: string, at: number): SentMessage[];
   inFlight(sessionId: string): number;
 }

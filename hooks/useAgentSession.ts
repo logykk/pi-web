@@ -2391,9 +2391,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         void waitForPromptSettlement(sentSessionId, promptRunId);
       }
     } catch (e) {
-      // Fork: another client (an MCP agent, another tab) started a run before this
-      // page heard of it. Queue the text behind that run, as Follow-up does. An
-      // edit must branch, so it keeps the refusal.
+      // Fork: another client (an MCP agent, another tab) started a run this page
+      // has not heard of. Queue the text as a follow-up; an edit must branch, so
+      // it keeps the refusal.
       if (sentSessionId && !editEntryId && isAgentBusyRefusal(e)) {
         rpcPromptPendingRef.current = false;
         dropOptimisticUserMessage();

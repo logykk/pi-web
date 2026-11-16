@@ -7,7 +7,6 @@ const MIN_TOKEN_LENGTH = 32;
 export const MAX_BODY_BYTES = 1024 * 1024;
 const LINK_BASE_ENV = "PI_WEB_MCP_LINK_BASE";
 
-/** Null while the endpoint is off: no token, or one shorter than MIN_TOKEN_LENGTH. */
 function configuredToken(env: NodeJS.ProcessEnv): string | null {
   const token = env[MCP_TOKEN_ENV]?.trim() ?? "";
   if (token.length >= MIN_TOKEN_LENGTH) return token;
@@ -74,10 +73,7 @@ export async function readBoundedBody(request: Request, maxBytes: number): Promi
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/**
- * Never `request.url`: under `next start` it can carry the bind address, which a remote person
- * cannot open. Called after guardMcpRequest, which refuses a request without Host.
- */
+/** Never `request.url`: under `next start` it can carry the bind address, which a remote person cannot open. */
 export function linkBaseFor(request: Request, env: NodeJS.ProcessEnv = process.env): string {
   const configured = env[LINK_BASE_ENV]?.trim();
   if (configured) return configured.replace(/\/+$/, "");
@@ -88,8 +84,8 @@ export function linkBaseFor(request: Request, env: NodeJS.ProcessEnv = process.e
 
 /**
  * `next start` answers SIGTERM with server.close(), which waits for every open request without a
- * timeout, and `pi-web stop` waits 10 s. Registered once per process. instrumentation-node.ts
- * already listens to both signals, so this listener does not change whether a signal ends the process.
+ * timeout, and `pi-web stop` waits 10 s. instrumentation-node.ts already listens to both signals,
+ * so this listener does not change whether a signal ends the process.
  */
 export function shutdownSignal(): AbortSignal {
   return processGlobal("shutdown", () => {
