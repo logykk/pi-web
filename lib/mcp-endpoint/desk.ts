@@ -151,6 +151,11 @@ function notFound(id: string): DeskError {
   return new DeskError(`No pi session ${id}. pi_sessions lists the sessions.`);
 }
 
+/** pi hands a blank message to the model as it is; pi-web's composer never sends one. */
+function refuseBlank(text: string): void {
+  if (!text.trim()) throw new DeskError("message must not be blank.");
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -309,6 +314,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
     },
 
     async send(id, text, { steer, cursor }, signal) {
+      refuseBlank(text);
       const transcript = await source(id, ports.live(id));
       hold(id);
       const from = cursor ?? { entryId: transcript.getLeafId(), dialogs: NO_DIALOGS, at: clock.now() };
@@ -393,6 +399,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
     },
 
     async newSession({ cwd, message, model, thinking, tools }, signal) {
+      refuseBlank(message);
       const dir = await directoryOf(cwd);
       const slash = model?.indexOf("/") ?? -1;
       if (model !== undefined && (slash <= 0 || slash === model.length - 1)) {

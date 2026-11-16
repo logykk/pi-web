@@ -77,7 +77,7 @@ function versionHeaderError(header: string | null, messages: readonly ClientMess
 }
 
 export type ArgSchema =
-  | { readonly type: "string"; readonly minLength?: 1; readonly maxLength?: number; readonly enum?: readonly string[]; readonly default?: string; readonly description?: string }
+  | { readonly type: "string"; readonly minLength?: 1; readonly enum?: readonly string[]; readonly default?: string; readonly description?: string }
   | { readonly type: "integer"; readonly minimum?: number; readonly maximum?: number; readonly default?: number; readonly description?: string }
   | { readonly type: "boolean"; readonly default?: boolean; readonly description?: string }
   | { readonly type: readonly ("string" | "number" | "boolean")[]; readonly description?: string };
@@ -148,8 +148,7 @@ function checkArg(name: string, schema: ArgSchema, value: unknown): string | nul
   switch (schema.type) {
     case "string": {
       if (typeof value !== "string") return `${name} must be a string, not ${typeName(value)}.`;
-      if (schema.minLength !== undefined && value.trim().length < schema.minLength) return `${name} must not be empty.`;
-      if (schema.maxLength !== undefined && value.length > schema.maxLength) return `${name} must be at most ${schema.maxLength} characters.`;
+      if (schema.minLength !== undefined && value.length < schema.minLength) return `${name} must not be empty.`;
       if (schema.enum && !schema.enum.includes(value)) return `${name} must be one of ${schema.enum.join(", ")}.`;
       return null;
     }
