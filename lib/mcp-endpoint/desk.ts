@@ -336,18 +336,16 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     },
 
     async stop(id) {
-      const live = ports.live(id);
-      if (!live) {
-        await source(id, null);
-        return { kind: "idle", status: snapshotStatus(id) };
-      }
-      ports.hold(id);
+      await source(id, ports.live(id));
+      // Before the wrapper is resolved: the agent's own send may still be building it, and an abort before the prompt lands stops nothing.
       for (const until = clock.now() + STOP_SEND_GRACE_MS; sendsInFlight(ledger.forSession(id)) > 0 && clock.now() < until;) {
         await sleep(100);
       }
-      if (sendsInFlight(ledger.forSession(id)) > 0) return { kind: "send-pending", status: snapshotStatus(id) };
-      const before = snapshotStatus(id);
-      if (!live.isRunning() && before.dialogs.length === 0) return { kind: "idle", status: before };
+      const live = ports.live(id);
+      if (live) ports.hold(id);
+      const status = statusOf(id, live);
+      if (status.sendsInFlight > 0) return { kind: "send-pending", status };
+      if (!live || (!status.running && status.dialogs.length === 0)) return { kind: "idle", status };
       const withdrawn = await within(live.abort(), STOP_MS, NEVER);
       if (!withdrawn) return { kind: "unwinding" };
       reconcile(id, live.transcript(), null);
