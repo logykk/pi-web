@@ -577,6 +577,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const liveFollowFrameRef = useRef<number | null>(null);
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const handleNavigateRef = useRef<((entryId: string) => Promise<boolean>) | undefined>(undefined);
+  const sendStreamingPromptRef = useRef<((message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => Promise<void>) | undefined>(undefined);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   // The command list as last loaded, and the get_commands request under way, if
@@ -2390,18 +2391,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       // Fork: another client (an MCP agent, another tab) started a run before this
-      // page heard of it. Queue the text behind that run, as Follow-up does.
-      if (sentSessionId && isPromptRejectedError(e) && e.message.startsWith("Agent is already processing")) {
+      // page heard of it. Queue the text behind that run, as Follow-up does. An
+      // edit must branch, so it keeps the refusal.
+      if (sentSessionId && !editEntryId && isPromptRejectedError(e) && e.message.startsWith("Agent is already processing")) {
         rpcPromptPendingRef.current = false;
-        setMessages((prev) => withoutMessage(prev, userMsg));
-        optimisticUserMessageKeyRef.current = null;
-        try {
-          await sendAgentCommand(sentSessionId, { type: "prompt", message, streamingBehavior: "followUp", ...(piImages?.length ? { images: piImages } : {}) });
-          void reconcileAgentState(sentSessionId);
-          return;
-        } catch {
-          // Falls through: the person gets the original refusal and their text back.
-        }
+        dropOptimisticUserMessage();
+        await sendStreamingPromptRef.current?.(message, "followUp", images);
+        void reconcileAgentState(sentSessionId);
+        return;
       }
       console.error("Failed to send message:", e);
       const definitivelyRejected = !promptRequestStarted || isPromptRejectedError(e);
@@ -3066,6 +3063,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       else addUnconfirmedSendNotice();
     }
   }, [addNotice, addUnconfirmedSendNotice, composerDraftKey, editEntryId, restoreSubmission]);
+  sendStreamingPromptRef.current = sendStreamingPrompt;
 
   const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
     await sendStreamingPrompt(message, "steer", images);
