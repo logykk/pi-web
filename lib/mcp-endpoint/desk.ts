@@ -279,7 +279,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
       (accepted) => ledger.settle(record.id, accepted),
       (error: unknown) => ledger.settle(record.id, { state: "refused", reason: errorText(error), at: clock.now() }),
     );
-    await within(settled, SEND_ACCEPT_MS, signal);
+    await waitAtMost(settled, SEND_ACCEPT_MS, signal);
     return { send: ledger.markReplied(record.id), status: snapshotStatus(id), cursor };
   }
 
@@ -386,7 +386,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
       const status = statusOf(id, live);
       if (status.sendsInFlight > 0) return { kind: "send-pending", status };
       if (!live || (!status.running && status.dialogs.length === 0)) return { kind: "idle", status };
-      const aborted = await within(live.abort(), STOP_MS, NEVER);
+      const aborted = await waitAtMost(live.abort(), STOP_MS, NEVER);
       if (aborted.kind !== "done") return { kind: "unwinding" };
       const now = clock.now();
       ledger.observe(id, { userEntries: userEntries(live.transcript()), queued: null, now });
@@ -409,7 +409,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
       });
       let built: Bounded<LiveSession>;
       try {
-        built = await within(creating, CREATE_MS, signal);
+        built = await waitAtMost(creating, CREATE_MS, signal);
       } catch (error) {
         throw new ToolError(`pi-web could not start a session in ${dir}: ${errorText(error)}`);
       }
@@ -437,7 +437,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
         checkouts.set(key, checkout);
       }
       try {
-        const done = await within(checkout, WORKTREE_MS, signal);
+        const done = await waitAtMost(checkout, WORKTREE_MS, signal);
         return done.kind === "done" ? done.value : { kind: "creating", branch: branch.trim() };
       } catch (error) {
         throw new ToolError(`git could not create the worktree: ${errorText(error)}`);
@@ -587,7 +587,7 @@ function sleep(ms: number): Promise<void> {
 
 type Bounded<T> = { readonly kind: "done"; readonly value: T } | { readonly kind: "timeout" } | { readonly kind: "aborted" };
 
-async function within<T>(promise: Promise<T>, ms: number, signal: AbortSignal): Promise<Bounded<T>> {
+async function waitAtMost<T>(promise: Promise<T>, ms: number, signal: AbortSignal): Promise<Bounded<T>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort = () => {};
   const cutoff = new Promise<Bounded<T>>((resolve) => {
