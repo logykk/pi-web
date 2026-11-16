@@ -34,23 +34,32 @@ export function noStoreJson(status: number, body: unknown, headers: Record<strin
   return Response.json(body, { status, headers: { "Cache-Control": "no-store", ...headers } });
 }
 
-export function guardMcpRequest(request: Request, env: NodeJS.ProcessEnv = process.env): Response | null {
+export type GuardedRequest =
+  | { readonly kind: "allowed"; readonly host: string }
+  | { readonly kind: "denied"; readonly response: Response };
+
+function denied(response: Response): GuardedRequest {
+  return { kind: "denied", response };
+}
+
+export function guardMcpRequest(request: Request, env: NodeJS.ProcessEnv = process.env): GuardedRequest {
   const token = configuredToken(env);
   if (token === null) {
     // Not 401, which sends some MCP clients into OAuth discovery for a server that has none.
-    return noStoreJson(404, {
+    return denied(noStoreJson(404, {
       error: `pi-web's MCP endpoint is off. Set ${MCP_TOKEN_ENV} (${MIN_TOKEN_LENGTH}+ characters) in pi-web's environment and restart it.`,
-    });
+    }));
   }
-  if (!isApiRequestAllowed(request)) return noStoreJson(403, { error: "Untrusted MCP request" });
+  const host = request.headers.get("host");
+  if (host === null || !isApiRequestAllowed(request)) return denied(noStoreJson(403, { error: "Untrusted MCP request" }));
   if (!bearerMatches(request.headers.get("authorization"), token)) {
-    return noStoreJson(
+    return denied(noStoreJson(
       401,
       { error: `Send Authorization: Bearer <${MCP_TOKEN_ENV}>.` },
       { "WWW-Authenticate": 'Bearer realm="pi-web", error="invalid_token"' },
-    );
+    ));
   }
-  return null;
+  return { kind: "allowed", host };
 }
 
 export async function readBoundedBody(request: Request, maxBytes: number): Promise<string | null> {
@@ -73,13 +82,13 @@ export async function readBoundedBody(request: Request, maxBytes: number): Promi
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Never `request.url`: under `next start` it can carry the bind address, which a remote person cannot open. */
-export function linkBaseFor(request: Request, env: NodeJS.ProcessEnv = process.env): string {
+/** The Host, never `request.url`: under `next start` it can carry the bind address, which a remote person cannot open. */
+export function linkBaseFor(host: string, forwardedProto: string | null, env: NodeJS.ProcessEnv = process.env): string {
   const configured = env[LINK_BASE_ENV]?.trim();
   if (configured) return configured.replace(/\/+$/, "");
-  const proto = request.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim().toLowerCase();
+  const proto = forwardedProto?.split(",", 1)[0]?.trim().toLowerCase();
   const scheme = proto === "https" || proto === "http" ? proto : "http";
-  return `${scheme}://${request.headers.get("host")}`;
+  return `${scheme}://${host}`;
 }
 
 /**
