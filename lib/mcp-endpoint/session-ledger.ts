@@ -28,6 +28,11 @@ export interface UserEntry {
   readonly time: number;
 }
 
+export interface Withdrawn {
+  readonly text: string;
+  readonly author: "agent" | "person";
+}
+
 export type PiQueue =
   | { readonly kind: "at-rest"; readonly queued: readonly string[] }
   | { readonly kind: "busy-or-unknown" };
@@ -37,7 +42,7 @@ export interface Ledger {
   settle(sendId: string, outcome: Exclude<SendOutcome, { state: "sending" }>): void;
   markReplied(sendId: string): SentMessage;
   observe(sessionId: string, observed: { readonly userEntries: readonly UserEntry[]; readonly pi: PiQueue; readonly now: number }): void;
-  withdraw(sessionId: string, texts: readonly string[], now: number): ("agent" | "person")[];
+  withdraw(sessionId: string, texts: readonly string[], now: number): Withdrawn[];
   authorOf(sessionId: string, entry: { readonly id: string; readonly time: number }): "agent" | "person" | "user";
   news(sessionId: string, at: number): SentMessage[];
   inFlight(sessionId: string): number;
@@ -131,9 +136,9 @@ export function createLedger(now: () => number = Date.now): Ledger {
       const open = sendsOf(sessionId).filter((send) => isOpen(send) && send.outcome.state === "accepted");
       return texts.map((text) => {
         const index = open.findIndex((send) => send.text.trim() === text.trim());
-        if (index === -1) return "person";
+        if (index === -1) return { text, author: "person" };
         open.splice(index, 1)[0].placement = { kind: "missing", since: at };
-        return "agent";
+        return { text, author: "agent" };
       });
     },
     authorOf(sessionId, entry) {

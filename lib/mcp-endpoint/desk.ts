@@ -8,7 +8,7 @@ import type { ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiResponse } from "../types";
 import type { LiveSession, PiWebPorts, RunningTool, SessionRow, TranscriptSource, WorktreeOutcome } from "./ports";
 import { isBusy, recheckIn, stepRest, type RestPhase, type RestReason } from "./rest";
-import { createLedger, type Delivery, type Ledger, type PiQueue, type SentMessage, type UserEntry } from "./session-ledger";
+import { createLedger, type Delivery, type Ledger, type PiQueue, type SentMessage, type UserEntry, type Withdrawn } from "./session-ledger";
 import { authorOf, branchSince, contentText, dialogDigest, NO_DIALOGS, type Author, type Cursor, type Delta, type EntryLike } from "./transcript";
 
 /** The generic MCP SDK client gives up at 60 s, nginx too, Cloudflare at 100 s. */
@@ -95,11 +95,6 @@ export type DialogAnswer = { readonly cancel: true } | { readonly value: string 
 export type AnswerResult =
   | { readonly outcome: "sent"; readonly dialog: Dialog; readonly shown: string }
   | { readonly outcome: "closed" };
-
-export interface Withdrawn {
-  readonly text: string;
-  readonly author: "agent" | "person";
-}
 
 export type StopResult =
   | { readonly kind: "send-pending"; readonly status: SessionStatus }
@@ -391,9 +386,8 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
       if (aborted.kind !== "done") return { kind: "unwinding" };
       const now = clock.now();
       ledger.observe(id, { userEntries: userEntries(live.transcript()), pi: { kind: "busy-or-unknown" }, now });
-      const texts = [...aborted.value.steering, ...aborted.value.followUp];
-      const authors = ledger.withdraw(id, texts, now);
-      return { kind: "stopped", withdrawn: texts.map((text, index) => ({ text, author: authors[index] })), status: snapshotStatus(id) };
+      const withdrawn = ledger.withdraw(id, [...aborted.value.steering, ...aborted.value.followUp], now);
+      return { kind: "stopped", withdrawn, status: snapshotStatus(id) };
     },
 
     async newSession({ cwd, message, model, thinking, tools }, signal) {
