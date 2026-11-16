@@ -63,12 +63,15 @@ export interface LabeledMessages {
   readonly authors: readonly Author[];
 }
 
-export interface ReadResult {
-  readonly session: SessionHeading;
-  readonly status: SessionStatus;
-  readonly page: LabeledMessages & { readonly hasMore: boolean; readonly oldestEntryId: string | null };
-  readonly cursor: Cursor | null;
+export interface ReadPage extends LabeledMessages {
+  readonly hasMore: boolean;
+  readonly oldestEntryId: string | null;
 }
+
+/** The latest page carries the agent's next cursor; an older page leaves its cursor alone. */
+export type ReadResult =
+  | { readonly kind: "latest"; readonly session: SessionHeading; readonly status: SessionStatus; readonly page: ReadPage; readonly cursor: Cursor }
+  | { readonly kind: "older"; readonly session: SessionHeading; readonly status: SessionStatus; readonly page: ReadPage };
 
 export interface SendResult {
   readonly send: SentMessage;
@@ -92,13 +95,16 @@ export type AnswerResult =
   | { readonly outcome: "sent"; readonly dialog: Dialog; readonly shown: string }
   | { readonly outcome: "closed" };
 
-export interface StopResult {
-  readonly stopped: boolean;
-  readonly unwinding: boolean;
-  readonly sendPending: boolean;
-  readonly withdrawn: readonly { readonly text: string; readonly author: "agent" | "person" }[];
-  readonly status: SessionStatus;
+export interface Withdrawn {
+  readonly text: string;
+  readonly author: "agent" | "person";
 }
+
+export type StopResult =
+  | { readonly kind: "send-pending"; readonly status: SessionStatus }
+  | { readonly kind: "idle"; readonly status: SessionStatus }
+  | { readonly kind: "unwinding" }
+  | { readonly kind: "stopped"; readonly withdrawn: readonly Withdrawn[]; readonly status: SessionStatus };
 
 export interface NewSessionResult {
   readonly session: SessionHeading;
@@ -184,9 +190,9 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
 
   function reconcile(id: string, transcript: TranscriptSource, observed: { status: SessionStatus; now: number } | null): void {
     const sends = ledger.forSession(id);
-    const unlanded = sends.filter((send) => send.landedEntryId === null && send.missingSince === null && send.outcome.state !== "refused");
+    const unlanded = sends.filter((send) => send.placement.kind === "open" && send.outcome.state !== "refused");
     if (unlanded.length === 0) return;
-    const landedIds = new Set(sends.map((send) => send.landedEntryId));
+    const landedIds = new Set(sends.flatMap((send) => send.placement.kind === "landed" ? [send.placement.entryId] : []));
     const from = Math.min(...unlanded.map((send) => send.sentAt)) - 2_000;
     const userEntries = transcript.getEntries()
       .filter((entry) => entry.type === "message" && entry.message?.role === "user" && !landedIds.has(entry.id) && entryTime(entry) >= from)
@@ -203,7 +209,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
 
   function label(id: string, transcript: TranscriptSource, converted: { messages: AgentMessage[]; entryIds: string[] }): LabeledMessages {
     reconcile(id, transcript, null);
-    const landed = new Set(ledger.forSession(id).map((send) => send.landedEntryId).filter((entryId) => entryId !== null));
+    const landed = new Set(ledger.forSession(id).flatMap((send) => send.placement.kind === "landed" ? [send.placement.entryId] : []));
     const authors = converted.messages.map((message, index) => {
       const entry = transcript.getEntry(converted.entryIds[index]);
       return authorOf(message, { id: converted.entryIds[index], type: entry?.type ?? "message", time: entryTime(entry) }, landed, ledger.since);
@@ -255,12 +261,13 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       }
       const page = ports.page(transcript, id, before ?? null, messages, before !== undefined);
       const status = snapshotStatus(id);
-      return {
+      const shown = {
         session: await heading(id, transcript),
         status,
         page: { ...label(id, transcript, page), hasMore: page.hasMore, oldestEntryId: page.oldestEntryId },
-        cursor: before !== undefined ? null : { entryId: transcript.getLeafId(), dialogs: dialogDigest(status.dialogs.map((dialog) => dialog.id)), at: clock.now() },
       };
+      if (before !== undefined) return { kind: "older", ...shown };
+      return { kind: "latest", ...shown, cursor: { entryId: transcript.getLeafId(), dialogs: dialogDigest(status.dialogs.map((dialog) => dialog.id)), at: clock.now() } };
     },
 
     async send(id, text, { steer, cursor }, signal) {
@@ -328,22 +335,21 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
 
     async stop(id) {
       const live = ports.live(id);
-      const idle = (status: SessionStatus): StopResult => ({ stopped: false, unwinding: false, sendPending: false, withdrawn: [], status });
       if (!live) {
         await source(id, null);
-        return idle(snapshotStatus(id));
+        return { kind: "idle", status: snapshotStatus(id) };
       }
       ports.hold(id);
       for (const until = clock.now() + STOP_SEND_GRACE_MS; sendsInFlight(ledger.forSession(id)) > 0 && clock.now() < until;) {
         await sleep(100);
       }
-      if (sendsInFlight(ledger.forSession(id)) > 0) return { ...idle(snapshotStatus(id)), sendPending: true };
+      if (sendsInFlight(ledger.forSession(id)) > 0) return { kind: "send-pending", status: snapshotStatus(id) };
       const before = snapshotStatus(id);
-      if (!live.isRunning() && before.dialogs.length === 0) return idle(before);
+      if (!live.isRunning() && before.dialogs.length === 0) return { kind: "idle", status: before };
       const withdrawn = await within(live.abort(), STOP_MS, NEVER);
-      if (!withdrawn) return { stopped: true, unwinding: true, sendPending: false, withdrawn: [], status: snapshotStatus(id) };
+      if (!withdrawn) return { kind: "unwinding" };
       reconcile(id, live.transcript(), null);
-      const ours = ledger.forSession(id).filter((send) => send.outcome.state === "accepted" && send.landedEntryId === null);
+      const ours = ledger.forSession(id).filter((send) => send.outcome.state === "accepted" && send.placement.kind !== "landed");
       const now = clock.now();
       const labeled = [...withdrawn.steering, ...withdrawn.followUp].map((text) => {
         const index = ours.findIndex((send) => send.text.trim() === text.trim());
@@ -352,7 +358,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
         ours.splice(index, 1);
         return { text, author: "agent" as const };
       });
-      return { stopped: true, unwinding: false, sendPending: false, withdrawn: labeled, status: snapshotStatus(id) };
+      return { kind: "stopped", withdrawn: labeled, status: snapshotStatus(id) };
     },
 
     async newSession({ cwd, message, model, thinking, tools }, signal) {

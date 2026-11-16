@@ -12,13 +12,29 @@ import {
   attachSessionProjectInfo, buildSessionContext, getAgentDir, invalidateSessionListCache, listAllSessions, mergeSessionLists,
   openSessionManager, resolveSessionPath,
 } from "../session-reader";
+import { isBlockingExtensionUiRequest } from "../extension-ui-queue";
 import { hasUnsettledSubagentRun } from "../subagent-runtime";
 import { getToolNamesForPreset, type ToolPreset } from "../tool-presets";
-import type { AgentMessage, ExtensionUiResponse, SessionEntry } from "../types";
+import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiRequest, ExtensionUiResponse, SessionEntry } from "../types";
 import { addWorktree, resolveProject, WorktreeBranchInUseError } from "../worktree";
 import type { BranchReader, EntryLike } from "./transcript";
 
 export type PiEvent = AgentEvent;
+
+/** The wrapper's events as the endpoint reads them: what ends a watch, what it reports, what wakes it. */
+export type SessionEvent =
+  | { readonly kind: "ended" }
+  | { readonly kind: "prompt-error"; readonly message: string }
+  | { readonly kind: "extension-error"; readonly extensionPath: string; readonly error: string }
+  | { readonly kind: "streaming" }
+  | { readonly kind: "other" };
+
+/** A top-level tool call under way; `elapsedMs` on the wrapper's clock. */
+export interface RunningTool {
+  readonly toolName: string;
+  readonly args: unknown;
+  readonly elapsedMs: number;
+}
 
 export interface TranscriptSource extends BranchReader {
   getEntries(): readonly EntryLike[];
@@ -37,6 +53,13 @@ export interface LiveSession {
    * extension shut down delivers `session_ended` at once.
    */
   onEvent(listener: (event: PiEvent) => void): () => void;
+  /** The blocking dialogs and open custom panels the wrapper holds, read from a fresh replay. */
+  openDialogs(): BlockingExtensionUiRequest[];
+  /**
+   * The top-level tool calls under way, from a fresh replay, oldest first: calls a tool makes itself
+   * (a codemode script's) are left out, and a finished call's nested ones go with it.
+   */
+  runningTools(): RunningTool[];
   /**
    * Resolves when pi accepted the message (started a run, queued it, or an extension command
    * took it), `{ parked: true }` when pi-web parked it behind a manual compaction; rejects with
@@ -224,6 +247,12 @@ export function piWebPorts(): PiWebPorts {
   };
 }
 
+function replay(wrapper: AgentSessionWrapper): AgentEvent[] {
+  const seen: AgentEvent[] = [];
+  wrapper.onEvent((event) => seen.push(event))();
+  return seen;
+}
+
 function adapt(wrapper: AgentSessionWrapper): LiveSession {
   // Never wrapper.onDestroy(): the registry owns that single callback.
   return {
@@ -231,6 +260,14 @@ function adapt(wrapper: AgentSessionWrapper): LiveSession {
     isAlive: () => wrapper.isAlive(),
     isRunning: () => wrapper.isRunning(),
     onEvent: (listener) => wrapper.onEvent(listener),
+    openDialogs: () => replay(wrapper)
+      .filter((event) => event.type === "extension_ui_request")
+      .map((event) => event as unknown as ExtensionUiRequest)
+      .filter(isBlockingExtensionUiRequest),
+    runningTools: () => replay(wrapper).flatMap((event): RunningTool[] =>
+      event.type === "tool_execution_start" && typeof event.toolName === "string"
+        ? [{ toolName: event.toolName, args: event.args, elapsedMs: typeof event.elapsedMs === "number" ? event.elapsedMs : 0 }]
+        : []),
     async prompt(message, streamingBehavior) {
       const result = await wrapper.send({ type: "prompt", message, streamingBehavior }) as { queued?: boolean } | null;
       return { parked: result?.queued === true };

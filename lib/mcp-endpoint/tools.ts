@@ -287,14 +287,19 @@ function renderSessionList({ rows, total }: { rows: readonly SessionRow[]; total
   return { text: lines.join("\n") };
 }
 
+const READ_PAGE: Readonly<Record<ReadResult["kind"], { heading: string; empty: string }>> = {
+  latest: { heading: "Latest messages:", empty: "No messages yet." },
+  older: { heading: "Older messages:", empty: "No older messages." },
+};
+
 function renderRead(result: ReadResult, call: CallContext): ToolText {
   const { session, status, page } = result;
   const lines = [headingLine(session), `pi-web link: ${call.linkBase}/${sessionDeepLink(session.id)}`, statusLine(status)];
-  if (page.messages.length === 0) lines.push(result.cursor ? "No messages yet." : "No older messages.");
-  else lines.push(result.cursor ? "Latest messages:" : "Older messages:", ...renderMessages(page.messages, page.authors, BUDGETS.read, { endsAtNewest: result.cursor !== null }));
+  if (page.messages.length === 0) lines.push(READ_PAGE[result.kind].empty);
+  else lines.push(READ_PAGE[result.kind].heading, ...renderMessages(page.messages, page.authors, BUDGETS.read, { endsAtNewest: result.kind === "latest" }));
   if (page.hasMore && page.oldestEntryId) lines.push(`older: pi_read {"session":"${session.id}","before":"${page.oldestEntryId}"}`);
   lines.push(...dialogLines(session.id, status.dialogs));
-  lines.push(result.cursor ? cursorLine(result.cursor) : "(An older page: keep using the cursor you have.)");
+  lines.push(result.kind === "latest" ? cursorLine(result.cursor) : "(An older page: keep using the cursor you have.)");
   return { text: lines.join("\n") };
 }
 
@@ -373,16 +378,23 @@ function renderAnswer(dialogId: string, result: AnswerResult): ToolText {
 }
 
 function renderStop(result: StopResult): ToolText {
-  if (result.sendPending) return { text: `Your message is still on its way to pi, so nothing was stopped. Call pi_stop again in a moment.\n${statusLine(result.status)}` };
-  if (!result.stopped) return { text: `There was nothing to stop.\n${statusLine(result.status)}` };
-  if (result.unwinding) return { text: "Stop was sent, but pi is still unwinding the run (a tool that ignores its abort signal). pi_wait shows when it ends." };
-  const lines = ["Stopped pi."];
-  if (result.withdrawn.length > 0) {
-    lines.push("Stop withdrew these queued messages. They were not sent, and they do not go back to the person's composer:");
-    lines.push(...result.withdrawn.map((item) => `  - [${item.author}] ${oneLine(item.text, 500)}`));
+  switch (result.kind) {
+    case "send-pending":
+      return { text: `Your message is still on its way to pi, so nothing was stopped. Call pi_stop again in a moment.\n${statusLine(result.status)}` };
+    case "idle":
+      return { text: `There was nothing to stop.\n${statusLine(result.status)}` };
+    case "unwinding":
+      return { text: "Stop was sent, but pi is still unwinding the run (a tool that ignores its abort signal). pi_wait shows when it ends." };
+    case "stopped": {
+      const lines = ["Stopped pi."];
+      if (result.withdrawn.length > 0) {
+        lines.push("Stop withdrew these queued messages. They were not sent, and they do not go back to the person's composer:");
+        lines.push(...result.withdrawn.map((item) => `  - [${item.author}] ${oneLine(item.text, 500)}`));
+      }
+      lines.push(statusLine(result.status));
+      return { text: lines.join("\n") };
+    }
   }
-  lines.push(statusLine(result.status));
-  return { text: lines.join("\n") };
 }
 
 function renderNewSession(result: NewSessionResult, call: CallContext): ToolText {
