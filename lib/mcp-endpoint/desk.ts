@@ -430,7 +430,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
 
     async newWorktree({ project, branch }, signal) {
       const dir = await directoryOf(project);
-      const key = `${(await ports.project(dir)).root}\0${branch.trim()}`;
+      const key = `${(await ports.project(dir)).mainCheckout}\0${branch.trim()}`;
       let checkout = checkouts.get(key);
       if (!checkout) {
         checkout = ports.addWorktree(dir, branch).finally(() => checkouts.delete(key));

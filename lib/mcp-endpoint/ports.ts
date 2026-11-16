@@ -110,7 +110,7 @@ export interface PiWebPorts {
     { messages: AgentMessage[]; entryIds: string[]; hasMore: boolean; oldestEntryId: string | null };
   listSessions(): Promise<SessionRow[]>;
   subagentsActive(id: string): boolean;
-  project(cwd: string): Promise<{ root: string; branch: string | null }>;
+  project(cwd: string): Promise<{ mainCheckout: string; branch: string | null }>;
   untrusted(cwd: string): boolean;
   /**
    * A session-liveness provider for the session id: while `isActive()`, no idle timeout reaps its
@@ -196,7 +196,7 @@ export function piWebPorts(): PiWebPorts {
 
     async project(cwd) {
       const info = await resolveProject(cwd);
-      return { root: info.projectRoot, branch: info.branch };
+      return { mainCheckout: info.projectRoot, branch: info.branch };
     },
 
     untrusted(cwd) {
