@@ -76,7 +76,7 @@ No call keeps a response open longer than 50 seconds, so proxies with a 60-secon
 - **Messages carry labels for the agent.** It reads `[agent]` for what it sent, `[person]` for what you typed, and `[user]` for messages from before Pi Web last restarted, whose sender is unknown. pi's replies read `[pi]`. Pi Web itself shows no labels: in the browser, the agent's messages look like yours.
 - **Stop is everyone's.** `pi_stop` stops the run for you too and withdraws every queued message, yours included. The texts go to the agent, not back into your composer.
 - **Extension questions reach both of you.** When an extension asks something, you see the dialog in the browser and the agent sees it in its reply, with the `pi_answer` call that answers it. The first answer counts. Panels that take keystrokes are yours alone.
-- **Sessions the agent uses stay loaded.** Pi Web normally unloads a session after 10 idle minutes. A session the agent sent to, waited on, answered or stopped stays loaded for 30 minutes after its last such call.
+- **Sessions the agent uses stay loaded.** Pi Web normally unloads a session after 10 idle minutes. A session the agent started, sent to, waited on, answered or stopped stays loaded for 30 minutes after its last such call.
 - **New sessions appear in your sidebar** within a few seconds, grouped under their project and worktree. The reply to `pi_new_session` holds a link to give you.
 
 ## Tools
@@ -102,5 +102,5 @@ No call keeps a response open longer than 50 seconds, so proxies with a 60-secon
 - It does not remove worktrees, and it never fetches: a new branch starts from the main checkout's `HEAD`, or from `origin/<branch>` when that was fetched already.
 - New sessions go in any existing folder on the machine, under the folder's real path.
 - A wrong token answers 401 and does not count toward the web login's lockout, so a stranger guessing tokens cannot lock you out of the web UI.
-- If you send in the browser in the moment before your page learns that the agent started a run, pi refuses the plain send, and the page queues your message as a follow-up instead, as the Follow-up button would.
+- If you send in the browser in the moment before your page learns that the agent started a run, pi refuses the plain send, and the page queues your message as a follow-up instead, as the Follow-up button would. An extension that reacts to what you type then sees that message twice, because pi runs it before it refuses the send.
 - Labels live in memory. After Pi Web restarts, earlier messages read `[user]`. A slash command the agent sends that pi expands into other text reads `[person]`.
