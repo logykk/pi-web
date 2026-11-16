@@ -35,6 +35,8 @@ async function sendIntoAnotherClientsRun({ followUp, editEntryId = null, refusal
   // The page loads an idle session; the other client's run starts just before its prompt lands.
   let running = false;
   const state = () => json({ running, state: { isStreaming: running, isPromptRunning: running } });
+  let hook;
+  const renderHandleSendUpdateBeforeRequest = () => hook.flush();
   globalThis.fetch = async (requestUrl, init = {}) => {
     const url = requestUrl.replace("?systemPrompt=0", "");
     if (url.startsWith("/api/models")) return json({ models: {}, modelList: [] });
@@ -46,7 +48,7 @@ async function sendIntoAnotherClientsRun({ followUp, editEntryId = null, refusal
       const command = JSON.parse(init.body);
       if (command.type !== "prompt") return json({ success: true, data: null });
       prompts.push(command);
-      hook.flush();
+      renderHandleSendUpdateBeforeRequest();
       if (!command.streamingBehavior) {
         running = refusal === ALREADY_PROCESSING;
         return json({ error: refusal, code: "prompt_rejected", accepted: false }, 500);
@@ -56,7 +58,6 @@ async function sendIntoAnotherClientsRun({ followUp, editEntryId = null, refusal
     if (url === "/api/agent/A") return state();
     return json({});
   };
-  let hook;
   const originalError = console.error;
   const errors = [];
   console.error = (...args) => errors.push(args);
