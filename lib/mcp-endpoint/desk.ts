@@ -373,8 +373,9 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       const status = statusOf(id, live);
       if (status.sendsInFlight > 0) return { kind: "send-pending", status };
       if (!live || (!status.running && status.dialogs.length === 0)) return { kind: "idle", status };
-      const withdrawn = await within(live.abort(), STOP_MS, NEVER);
-      if (!withdrawn) return { kind: "unwinding" };
+      const aborted = await within(live.abort(), STOP_MS, NEVER);
+      if (aborted.kind !== "done") return { kind: "unwinding" };
+      const withdrawn = aborted.value;
       ledger.observe(id, { userEntries: userEntries(live.transcript()), queued: null, now: clock.now() });
       const texts = [...withdrawn.steering, ...withdrawn.followUp];
       const authors = ledger.withdraw(id, texts, clock.now());
@@ -392,13 +393,15 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
         ...(model !== undefined ? { model: { provider: model.slice(0, slash), modelId: model.slice(slash + 1) } } : {}),
         ...(thinking ? { thinkingLevel: thinking } : {}),
       });
-      let session: LiveSession | null;
+      let built: Bounded<LiveSession>;
       try {
-        session = await within(creating, CREATE_MS, signal);
+        built = await within(creating, CREATE_MS, signal);
       } catch (error) {
         throw new DeskError("bad-input", `pi-web could not start a session in ${dir}: ${errorText(error)}`);
       }
-      if (!session) throw new DeskError("unavailable", `pi-web was still building the session after ${CREATE_MS / 1000} s; nothing was sent. Try again.`);
+      if (built.kind === "timeout") throw new DeskError("unavailable", `pi-web was still building the session after ${CREATE_MS / 1000} s; nothing was sent. Try again.`);
+      if (built.kind === "aborted") throw new DeskError("unavailable", "The call ended early (cancelled, or pi-web is stopping) while pi-web was building the session; nothing was sent.");
+      const session = built.value;
       hold(session.id);
       const transcript = session.transcript();
       const send = await deliver(session.id, message, "followUp", { entryId: transcript.getLeafId(), dialogs: NO_DIALOGS, at: clock.now() }, signal);
@@ -420,7 +423,8 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
         checkouts.set(key, checkout);
       }
       try {
-        return await within(checkout, WORKTREE_MS, signal) ?? { kind: "creating", branch: branch.trim() };
+        const done = await within(checkout, WORKTREE_MS, signal);
+        return done.kind === "done" ? done.value : { kind: "creating", branch: branch.trim() };
       } catch (error) {
         throw new DeskError("bad-input", `git could not create the worktree: ${errorText(error)}`);
       }
@@ -567,18 +571,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function within<T>(promise: Promise<T>, ms: number, signal: AbortSignal): Promise<T | null> {
-  promise.catch(() => {});
+type Bounded<T> = { readonly kind: "done"; readonly value: T } | { readonly kind: "timeout" } | { readonly kind: "aborted" };
+
+/** Waits for `promise` up to `ms` or the signal, whichever comes first; a rejection rejects. Nothing is cancelled. */
+async function within<T>(promise: Promise<T>, ms: number, signal: AbortSignal): Promise<Bounded<T>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort = () => {};
-  const cutoff = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), ms);
-    onAbort = () => resolve(null);
-    if (signal.aborted) resolve(null);
+  const cutoff = new Promise<Bounded<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "timeout" }), ms);
+    onAbort = () => resolve({ kind: "aborted" });
+    if (signal.aborted) onAbort();
     else signal.addEventListener("abort", onAbort, { once: true });
   });
   try {
-    return await Promise.race([promise, cutoff]);
+    return await Promise.race([promise.then((value): Bounded<T> => ({ kind: "done", value })), cutoff]);
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);
