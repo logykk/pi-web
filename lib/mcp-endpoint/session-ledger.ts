@@ -44,7 +44,7 @@ export interface Ledger {
   observe(sessionId: string, observed: { readonly userEntries: readonly UserEntry[]; readonly pi: PiQueue; readonly now: number }): void;
   withdraw(sessionId: string, texts: readonly string[], now: number): Withdrawn[];
   authorOf(sessionId: string, entry: { readonly id: string; readonly time: number }): "agent" | "person" | "user";
-  news(sessionId: string, at: number): SentMessage[];
+  deliveryNewsSince(sessionId: string, at: number): SentMessage[];
   inFlight(sessionId: string): number;
 }
 
@@ -145,7 +145,7 @@ export function createLedger(now: () => number = Date.now): Ledger {
       if (sendsOf(sessionId).some((send) => send.placement.kind === "landed" && send.placement.entryId === entry.id)) return "agent";
       return entry.time >= since ? "person" : "user";
     },
-    news(sessionId, at) {
+    deliveryNewsSince(sessionId, at) {
       return sendsOf(sessionId)
         .filter((send) => (send.repliedWhileSending && send.outcome.state === "refused" && send.outcome.at > at)
           || (send.placement.kind === "missing" && send.placement.since > at))

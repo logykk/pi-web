@@ -334,7 +334,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
           ledger.observe(id, { userEntries: userEntries(transcript), pi, now });
           const delta = branchSince(transcript, cursor.entryId, MAX_DELTA_ENTRIES);
           const shown = shownMessages(id, transcript, ports.toMessages(delta.entries, id));
-          const news = ledger.news(id, cursor.at);
+          const news = ledger.deliveryNewsSince(id, cursor.at);
           const dialogs = dialogDigest(status.dialogs.map((dialog) => dialog.id));
           phase = stepRest(phase, {
             now, deadline, aborted: signal.aborted, busy: isBusy(status),
