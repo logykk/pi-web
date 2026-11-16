@@ -41,7 +41,7 @@ pi-web's own MCP server, for agents that work in pi sessions beside a person in 
 - `branchSince()` walks from the leaf up to the cursor's entry through `getEntry()`: `since` (an ancestor), `moved` (another branch, after "Edit from here" or a branch switch; entries from the deepest common ancestor) or `unknown` (not in this session; the newest entries). It is capped to `MAX_DELTA_ENTRIES`.
 - The agent sees what the chat shows. `shownMessages()` in `desk.ts` converts the entries and drops what upstream's `isHiddenCustomMessage()` hides, and a wait has news only when something is left. A background `session_info` title write converts to no message, so it wakes no waiter; a `display: false` custom message never reaches the agent.
 - Slices convert with `buildSessionContext(slice, slice.at(-1).id)`: the branch walk stops where a parent is missing, so it converts exactly the slice.
-- `authorOf()` names who wrote a user message (the ledger knows) and marks summary entries. Other messages get no author: their role says who, and `replies.ts` labels them `[pi]`, `[shell]` or `[extension …]`.
+- `authorOf()` names who wrote a user message (the ledger knows) and marks summary entries. Other messages get `"by-role"`: their role says who, and `replies.ts` labels them `[pi]`, `[shell]` or `[extension …]`.
 
 ## When a wait is over (`rest.ts`)
 - **Never `prompt_done`**: pi-web emits it only for prompts without `streamingBehavior`, never for runs the person or a subagent report started, and for a deferred prompt before its run begins.

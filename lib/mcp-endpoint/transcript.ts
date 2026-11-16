@@ -76,9 +76,9 @@ export function branchSince(reader: BranchReader, cursorEntryId: string | null, 
 
 export type Author = "agent" | "person" | "user" | "summary";
 
-export function authorOf(message: AgentMessage, entryType: string, userAuthor: () => Exclude<Author, "summary">): Author | null {
+export function authorOf(message: AgentMessage, entryType: string, userAuthor: () => Exclude<Author, "summary">): Author | "by-role" {
   if (entryType === "branch_summary" || entryType === "compaction") return "summary";
-  return message.role === "user" ? userAuthor() : null;
+  return message.role === "user" ? userAuthor() : "by-role";
 }
 
 export function contentText(content: unknown): string {

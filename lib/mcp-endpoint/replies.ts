@@ -69,7 +69,7 @@ function resultLine(result: ToolResultMessage | undefined, budget: RenderBudget,
 
 export function renderMessages(
   messages: readonly AgentMessage[],
-  authors: readonly (Author | null)[],
+  authors: readonly (Author | "by-role")[],
   budget: RenderBudget,
   options: { readonly endsAtNewest: boolean },
 ): string[] {
