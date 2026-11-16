@@ -381,8 +381,6 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
   };
 }
 
-const STREAMING_ONLY_EVENTS = new Set(["message_update", "tool_execution_update", "bash_output"]);
-
 class SessionWatch {
   private session: LiveSession | null = null;
   private off: (() => void) | null = null;
@@ -428,18 +426,24 @@ class SessionWatch {
     let replaying = true;
     let endedDuringReplay = false;
     const off = session.onEvent((event) => {
-      if (event.type === "session_shutdown" || event.type === "session_ended") {
-        if (replaying) endedDuringReplay = true;
-        else {
-          this.detach();
-          this.poke();
-        }
+      if (replaying) {
+        if (event.kind === "ended") endedDuringReplay = true;
         return;
       }
-      if (replaying) return;
-      if (event.type === "prompt_error") this.notices.push(`pi reported an error: ${String(event.errorMessage)}`);
-      if (event.type === "extension_error") this.notices.push(`Extension ${String(event.extensionPath)} failed: ${String(event.error)}`);
-      if (!STREAMING_ONLY_EVENTS.has(event.type)) this.poke();
+      switch (event.kind) {
+        case "ended":
+          this.detach();
+          break;
+        case "streaming":
+          return;
+        case "prompt-error":
+          this.notices.push(`pi reported an error: ${event.message}`);
+          break;
+        case "extension-error":
+          this.notices.push(`Extension ${event.extensionPath} failed: ${event.error}`);
+          break;
+      }
+      this.poke();
     });
     replaying = false;
     this.off = off;

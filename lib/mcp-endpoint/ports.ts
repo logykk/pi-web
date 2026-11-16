@@ -19,8 +19,6 @@ import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiRequest, Exte
 import { addWorktree, resolveProject, WorktreeBranchInUseError } from "../worktree";
 import type { BranchReader, EntryLike } from "./transcript";
 
-export type PiEvent = AgentEvent;
-
 /** The wrapper's events as the endpoint reads them: what ends a watch, what it reports, what wakes it. */
 export type SessionEvent =
   | { readonly kind: "ended" }
@@ -48,11 +46,11 @@ export interface LiveSession {
   /** A prompt admitted, a run streaming, compaction, or a `!` command. */
   isRunning(): boolean;
   /**
-   * Subscribes to every event. Synchronously, inside this call, the wrapper first replays the
-   * open extension dialogs and each running top-level tool's start (with elapsedMs); a wrapper an
-   * extension shut down delivers `session_ended` at once.
+   * Subscribes to every event, narrowed. Synchronously, inside this call, the wrapper first replays
+   * the open extension dialogs, each running top-level tool's start and latest update, and the
+   * startup notices; a wrapper an extension shut down delivers `ended` at once.
    */
-  onEvent(listener: (event: PiEvent) => void): () => void;
+  onEvent(listener: (event: SessionEvent) => void): () => void;
   /** The blocking dialogs and open custom panels the wrapper holds, read from a fresh replay. */
   openDialogs(): BlockingExtensionUiRequest[];
   /**
@@ -247,6 +245,28 @@ export function piWebPorts(): PiWebPorts {
   };
 }
 
+function text(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function toSessionEvent(event: AgentEvent): SessionEvent {
+  switch (event.type) {
+    case "session_shutdown":
+    case "session_ended":
+      return { kind: "ended" };
+    case "prompt_error":
+      return { kind: "prompt-error", message: text(event.errorMessage, "Command failed") };
+    case "extension_error":
+      return { kind: "extension-error", extensionPath: text(event.extensionPath, "unknown"), error: text(event.error, "Extension command failed") };
+    case "message_update":
+    case "tool_execution_update":
+    case "bash_output":
+      return { kind: "streaming" };
+    default:
+      return { kind: "other" };
+  }
+}
+
 function replay(wrapper: AgentSessionWrapper): AgentEvent[] {
   const seen: AgentEvent[] = [];
   wrapper.onEvent((event) => seen.push(event))();
@@ -259,7 +279,7 @@ function adapt(wrapper: AgentSessionWrapper): LiveSession {
     id: wrapper.sessionId,
     isAlive: () => wrapper.isAlive(),
     isRunning: () => wrapper.isRunning(),
-    onEvent: (listener) => wrapper.onEvent(listener),
+    onEvent: (listener) => wrapper.onEvent((event) => listener(toSessionEvent(event))),
     openDialogs: () => replay(wrapper)
       .filter((event) => event.type === "extension_ui_request")
       .map((event) => event as unknown as ExtensionUiRequest)
