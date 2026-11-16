@@ -8,7 +8,7 @@ import type { ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiResponse } from "../types";
 import type { LiveSession, PiWebPorts, RunningTool, SessionRow, TranscriptSource, WorktreeOutcome } from "./ports";
 import { recheckIn, stepRest, type RestPhase, type RestReason } from "./rest";
-import type { Delivery, Ledger, SentMessage, UserEntry } from "./session-ledger";
+import { createLedger, type Delivery, type Ledger, type SentMessage, type UserEntry } from "./session-ledger";
 import { authorOf, branchSince, contentText, dialogDigest, NO_DIALOGS, type Author, type Cursor, type Delta, type EntryLike } from "./transcript";
 
 /** The generic MCP SDK client gives up at 60 s, nginx too, Cloudflare at 100 s. */
@@ -166,11 +166,24 @@ function userEntries(transcript: TranscriptSource): UserEntry[] {
     .map((entry) => ({ entryId: entry.id, text: contentText(entry.message?.content), time: entryTime(entry) }));
 }
 
-export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Date): Desk {
-  const holds = new Map<string, { touchedAt: number; dispose: () => void }>();
-  // A checkout can take minutes. A repeat during it must join it, not read git's half-made
-  // worktree as "exists"; a repeat after it lands in WorktreeBranchInUseError.
-  const checkouts = new Map<string, Promise<WorktreeOutcome>>();
+/** What the desk keeps between calls. pi-web keeps one per process, so a dev hot reload builds a new desk around it. */
+export interface DeskMemory {
+  readonly ledger: Ledger;
+  /** The sessions the endpoint keeps loaded, by session id. */
+  readonly holds: Map<string, { touchedAt: number; dispose: () => void }>;
+  /**
+   * Checkouts under way, by repo root and branch. A checkout can take minutes. A repeat during it
+   * must join it, not read git's half-made worktree as "exists"; a repeat after it lands in
+   * WorktreeBranchInUseError.
+   */
+  readonly checkouts: Map<string, Promise<WorktreeOutcome>>;
+}
+
+export function createDeskMemory(): DeskMemory {
+  return { ledger: createLedger(), holds: new Map(), checkouts: new Map() };
+}
+
+export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: DeskMemory, clock: Clock = Date): Desk {
 
   /** Keeps a session loaded until HOLD_MS after its last touch; any touch lets expired holds go. */
   function hold(id: string): void {

@@ -3,13 +3,14 @@ import packageJson from "../../package.json";
 import { sessionDeepLink } from "../session-links";
 import { TOOL_PRESET_VALUES } from "../tool-presets";
 import {
-  createDesk, DeskError, parseSessionRef, WAIT_DEFAULT_MS, WAIT_MAX_MS,
+  createDesk, createDeskMemory, DeskError, parseSessionRef, WAIT_DEFAULT_MS, WAIT_MAX_MS,
   type AnswerResult, type Desk, type Dialog, type NewSessionResult, type NewWorktreeResult, type ReadResult, type SendResult,
   type SessionHeading, type SessionId, type SessionStatus, type StopResult, type WaitResult,
 } from "./desk";
 import { defineTool, type CallContext, type McpServerDefinition, type ToolSpec, type ToolText } from "./jsonrpc";
 import { piWebPorts, type SessionRow } from "./ports";
-import { ledger, type SentMessage } from "./session-ledger";
+import { processGlobal } from "./process-global";
+import type { SentMessage } from "./session-ledger";
 import { BUDGETS, decodeCursor, encodeCursor, renderMessages, type Cursor } from "./transcript";
 
 const SESSION = { type: "string", minLength: 1, description: "The session id, or the pi-web link the person has open (…/?session=<id>)." } as const;
@@ -198,7 +199,7 @@ export function serverFor(desk: Desk): McpServerDefinition {
 let server: McpServerDefinition | null = null;
 
 export function mcpServer(): McpServerDefinition {
-  server ??= serverFor(createDesk(piWebPorts(), ledger()));
+  server ??= serverFor(createDesk(piWebPorts(), processGlobal("desk-memory", createDeskMemory)));
   return server;
 }
 

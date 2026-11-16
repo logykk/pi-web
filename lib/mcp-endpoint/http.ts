@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { isApiRequestAllowed } from "../request-security";
+import { processGlobal } from "./process-global";
 
 export const MCP_TOKEN_ENV = "PI_WEB_MCP_TOKEN";
 export const MIN_TOKEN_LENGTH = 32;
@@ -10,8 +11,6 @@ export type TokenConfig =
   | { readonly kind: "disabled"; readonly why: "unset" | "too-short" }
   | { readonly kind: "enabled"; readonly digest: Buffer };
 
-const SHORT_TOKEN_WARNED = Symbol.for("pi-web.mcp-endpoint.short-token-warned");
-
 function sha256(text: string): Buffer {
   return createHash("sha256").update(text, "utf8").digest();
 }
@@ -20,11 +19,10 @@ export function readTokenConfig(env: NodeJS.ProcessEnv = process.env): TokenConf
   const token = env[MCP_TOKEN_ENV]?.trim() ?? "";
   if (!token) return { kind: "disabled", why: "unset" };
   if (token.length < MIN_TOKEN_LENGTH) {
-    const flags = globalThis as unknown as Record<symbol, boolean | undefined>;
-    if (!flags[SHORT_TOKEN_WARNED]) {
-      flags[SHORT_TOKEN_WARNED] = true;
+    processGlobal("short-token-warned", () => {
       console.warn(`[pi-web] ${MCP_TOKEN_ENV} is shorter than ${MIN_TOKEN_LENGTH} characters, so /mcp stays off.`);
-    }
+      return true;
+    });
     return { kind: "disabled", why: "too-short" };
   }
   return { kind: "enabled", digest: sha256(token) };
@@ -89,24 +87,17 @@ export function linkBaseFor(request: Request, env: NodeJS.ProcessEnv = process.e
   return `${scheme}://${request.headers.get("host") ?? "localhost"}`;
 }
 
-const SHUTDOWN = Symbol.for("pi-web.mcp-endpoint.shutdown");
-
 /**
  * `next start` answers SIGTERM with server.close(), which waits for every open request without a
- * timeout, and `pi-web stop` waits 10 s. Registered once per process on globalThis, so hot reloads
- * and route bundles share it. instrumentation-node.ts already listens to both signals, so this
- * listener does not change whether a signal ends the process.
+ * timeout, and `pi-web stop` waits 10 s. Registered once per process. instrumentation-node.ts
+ * already listens to both signals, so this listener does not change whether a signal ends the process.
  */
 export function shutdownSignal(): AbortSignal {
-  const store = globalThis as unknown as Record<symbol, AbortController | undefined>;
-  let controller = store[SHUTDOWN];
-  if (!controller) {
-    const created = new AbortController();
-    controller = created;
-    store[SHUTDOWN] = created;
-    const stop = () => created.abort(new Error("pi-web is stopping"));
+  return processGlobal("shutdown", () => {
+    const controller = new AbortController();
+    const stop = () => controller.abort(new Error("pi-web is stopping"));
     process.once("SIGTERM", stop);
     process.once("SIGINT", stop);
-  }
-  return controller.signal;
+    return controller;
+  }).signal;
 }

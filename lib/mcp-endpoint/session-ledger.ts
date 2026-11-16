@@ -157,11 +157,3 @@ export function createLedger(now: () => number = Date.now): Ledger {
     },
   };
 }
-
-const LEDGER = Symbol.for("pi-web.mcp-endpoint.ledger");
-
-/** The process-wide ledger: dev hot reload and every route bundle share it. */
-export function ledger(): Ledger {
-  const store = globalThis as unknown as Record<symbol, Ledger | undefined>;
-  return store[LEDGER] ??= createLedger();
-}
