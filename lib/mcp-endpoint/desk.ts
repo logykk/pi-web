@@ -4,8 +4,8 @@ import { isAbsolute, join, sep } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { SESSION_ID_PATTERN } from "../session-ui-state-shared";
 import type { ToolPreset } from "../tool-presets";
-import type { AgentMessage, ExtensionUiRequest, ExtensionUiResponse } from "../types";
-import type { LiveSession, PiEvent, PiWebPorts, SessionRow, TranscriptSource, WorktreeOutcome } from "./ports";
+import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiResponse } from "../types";
+import type { LiveSession, PiWebPorts, RunningTool, SessionRow, TranscriptSource, WorktreeOutcome } from "./ports";
 import { recheckIn, stepRest, type RestPhase, type RestReason } from "./rest";
 import { deliveryNews, reconcileFates, sendsInFlight, type Delivery, type Ledger, type SentMessage } from "./session-ledger";
 import { authorOf, branchSince, contentText, dialogDigest, matchLandings, NO_DIALOGS, type Author, type Cursor, type Delta, type EntryLike } from "./transcript";
@@ -161,25 +161,20 @@ function entryTime(entry: EntryLike | undefined): number {
 }
 
 export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Date): Desk {
-  function statusOf(id: string, watch: SessionWatch, live: LiveSession | null): SessionStatus {
+  function statusOf(id: string, live: LiveSession | null): SessionStatus {
     return {
       loaded: live !== null,
       running: live?.isRunning() ?? false,
       subagentsActive: ports.subagentsActive(id),
       sendsInFlight: sendsInFlight(ledger.forSession(id)),
-      dialogs: watch.openDialogs(),
+      dialogs: live?.openDialogs().map(toDialog) ?? [],
       queued: live?.queued() ?? { steering: [], followUp: [] },
-      activity: watch.activity(clock.now()),
+      activity: activityOf(live?.runningTools() ?? []),
     };
   }
 
   function snapshotStatus(id: string): SessionStatus {
-    const watch = new SessionWatch(ports, id, clock);
-    try {
-      return statusOf(id, watch, watch.live());
-    } finally {
-      watch.close();
-    }
+    return statusOf(id, ports.live(id));
   }
 
   async function source(id: string, live: LiveSession | null): Promise<TranscriptSource> {
@@ -280,7 +275,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     async wait(id, cursor, timeoutMs, signal) {
       const started = clock.now();
       const deadline = started + Math.min(Math.max(timeoutMs, 0), WAIT_MAX_MS);
-      const watch = new SessionWatch(ports, id, clock);
+      const watch = new SessionWatch(ports, id);
       try {
         await source(id, watch.live());
         ports.hold(id);
@@ -289,7 +284,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
           const now = clock.now();
           const live = watch.live();
           const transcript = await source(id, live);
-          const status = statusOf(id, watch, live);
+          const status = statusOf(id, live);
           reconcile(id, transcript, { status, now });
           const delta = branchSince(transcript, cursor.entryId, MAX_DELTA_ENTRIES);
           const news = deliveryNews(ledger.forSession(id), cursor.at);
@@ -320,13 +315,14 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     },
 
     async answer(id, dialogId, answer) {
-      if (!ports.live(id)) {
+      const live = ports.live(id);
+      if (!live) {
         await source(id, null);
         return { outcome: "closed" };
       }
-      const dialog = snapshotStatus(id).dialogs.find((open) => open.id === dialogId);
-      const live = ports.live(id);
-      if (!dialog || !live) return { outcome: "closed" };
+      const request = live.openDialogs().find((open) => open.id === dialogId);
+      if (!request) return { outcome: "closed" };
+      const dialog = toDialog(request);
       const { response, shown } = toResponse(dialog, answer);
       await live.answer(response);
       ports.hold(id);
@@ -402,27 +398,14 @@ class SessionWatch {
   private off: (() => void) | null = null;
   private wake: (() => void) | null = null;
   private dirty = false;
-  private readonly dialogs = new Map<string, Dialog>();
-  private readonly tools = new Map<string, { name: string; detail: string; startedAt: number }>();
   readonly notices: string[] = [];
 
-  constructor(private readonly ports: PiWebPorts, private readonly id: string, private readonly clock: Clock) {}
+  constructor(private readonly ports: PiWebPorts, private readonly id: string) {}
 
   live(): LiveSession | null {
     if (this.session && !this.session.isAlive()) this.detach();
     if (!this.session) this.attach();
     return this.session;
-  }
-
-  openDialogs(): Dialog[] {
-    return [...this.dialogs.values()];
-  }
-
-  activity(now: number): string | null {
-    let newest: { name: string; detail: string; startedAt: number } | null = null;
-    for (const tool of this.tools.values()) if (!newest || tool.startedAt >= newest.startedAt) newest = tool;
-    if (!newest) return null;
-    return `${newest.name}${newest.detail ? ` ${newest.detail}` : ""} for ${Math.max(0, Math.round((now - newest.startedAt) / 1000))} s`;
   }
 
   changed(ms: number, signal: AbortSignal): Promise<void> {
@@ -463,7 +446,6 @@ class SessionWatch {
         }
         return;
       }
-      this.track(event);
       if (replaying) return;
       if (event.type === "prompt_error") this.notices.push(`pi reported an error: ${String(event.errorMessage)}`);
       if (event.type === "extension_error") this.notices.push(`Extension ${String(event.extensionPath)} failed: ${String(event.error)}`);
@@ -478,37 +460,6 @@ class SessionWatch {
     this.off?.();
     this.off = null;
     this.session = null;
-    this.dialogs.clear();
-    this.tools.clear();
-  }
-
-  private track(event: PiEvent): void {
-    switch (event.type) {
-      case "extension_ui_request": {
-        const request = event as unknown as ExtensionUiRequest;
-        const dialog = toDialog(request);
-        if (dialog) this.dialogs.set(request.id, dialog);
-        else this.dialogs.delete(request.id);
-        return;
-      }
-      case "extension_ui_closed":
-        this.dialogs.delete(String(event.id));
-        return;
-      case "tool_execution_start":
-        this.tools.set(String(event.toolCallId), {
-          name: String(event.toolName),
-          detail: toolDetail(event.args),
-          startedAt: this.clock.now() - (typeof event.elapsedMs === "number" ? event.elapsedMs : 0),
-        });
-        return;
-      case "tool_execution_end":
-        this.tools.delete(String(event.toolCallId));
-        return;
-      case "agent_end":
-      case "agent_settled":
-        this.tools.clear();
-        return;
-    }
   }
 
   private poke(): void {
@@ -518,7 +469,7 @@ class SessionWatch {
   }
 }
 
-function toDialog(request: ExtensionUiRequest): Dialog | null {
+function toDialog(request: BlockingExtensionUiRequest): Dialog {
   switch (request.method) {
     case "select":
       return { id: request.id, kind: "choice", title: request.title, options: request.options };
@@ -529,10 +480,15 @@ function toDialog(request: ExtensionUiRequest): Dialog | null {
     case "editor":
       return { id: request.id, kind: "text", title: request.title, multiline: true, ...(request.prefill ? { prefill: request.prefill } : {}) };
     case "custom":
-      return request.closed ? null : { id: request.id, kind: "panel", lines: request.lines };
-    default:
-      return null;
+      return { id: request.id, kind: "panel", lines: request.lines };
   }
+}
+
+function activityOf(tools: readonly RunningTool[]): string | null {
+  const newest = tools.reduce<RunningTool | null>((latest, tool) => !latest || tool.elapsedMs <= latest.elapsedMs ? tool : latest, null);
+  if (!newest) return null;
+  const detail = toolDetail(newest.args);
+  return `${newest.toolName}${detail ? ` ${detail}` : ""} for ${Math.round(newest.elapsedMs / 1000)} s`;
 }
 
 const YES_NO: Readonly<Record<string, boolean>> = { yes: true, true: true, y: true, no: false, false: false, n: false };
