@@ -274,7 +274,7 @@ export type McpReply =
   | { readonly status: 202 }
   | { readonly status: 200 | 400; readonly body: JsonRpcResponse | JsonRpcResponse[] };
 
-/** One POST body, start to end: 202 when no message needs an answer. */
+/** One POST body, from its text to the HTTP status and JSON body. 202 means no message needs an answer. */
 export async function handleMcpBody(
   server: EndpointServer,
   text: string,

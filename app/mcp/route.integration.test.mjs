@@ -35,8 +35,7 @@ after(async () => {
   await rm(agentDir, { recursive: true, force: true });
 });
 
-/** The endpoint on, reading the seeded agent dir. */
-function on(t) {
+function endpointOn(t) {
   withEnv(t, { PI_WEB_MCP_TOKEN: TOKEN, PI_CODING_AGENT_DIR: agentDir });
   invalidateSessionListCache();
 }
@@ -64,7 +63,7 @@ test("with no token configured, /mcp answers 404 to every method", async (t) => 
 });
 
 test("a wrong or missing bearer is 401 with WWW-Authenticate, before any method's own answer", async (t) => {
-  on(t);
+  endpointOn(t);
   const wrong = await POST(mcp({ jsonrpc: "2.0", id: 1, method: "ping" }, { token: "wrong-token" }));
   assert.equal(wrong.status, 401);
   assert.match(wrong.headers.get("www-authenticate"), /^Bearer realm="pi-web"/);
@@ -73,7 +72,7 @@ test("a wrong or missing bearer is 401 with WWW-Authenticate, before any method'
 });
 
 test("GET and DELETE answer 405 with Allow: POST", async (t) => {
-  on(t);
+  endpointOn(t);
   const get = await GET(mcp(null, { method: "GET" }));
   assert.equal(get.status, 405);
   assert.equal(get.headers.get("allow"), "POST");
@@ -82,7 +81,7 @@ test("GET and DELETE answer 405 with Allow: POST", async (t) => {
 });
 
 test("a POST body must be JSON and within the bound: 415, 413, and 400 for junk", async (t) => {
-  on(t);
+  endpointOn(t);
   assert.equal((await POST(mcp("ping", { headers: { "content-type": "text/plain" } }))).status, 415);
   assert.equal((await POST(mcp(`"${"x".repeat(MAX_BODY_BYTES)}"`))).status, 413);
   const junk = await POST(mcp("{oops"));
@@ -91,7 +90,7 @@ test("a POST body must be JSON and within the bound: 415, 413, and 400 for junk"
 });
 
 test("a probe under an unknown MCP-Protocol-Version is a 400, the client's signal to fall back; without the header it is -32601", async (t) => {
-  on(t);
+  endpointOn(t);
   const discover = await POST(mcp({ jsonrpc: "2.0", id: 0, method: "server/discover", params: {} }, { headers: { "mcp-protocol-version": "2026-07-28" } }));
   assert.equal(discover.status, 400);
   assert.equal((await discover.json()).id, 0);
@@ -101,7 +100,7 @@ test("a probe under an unknown MCP-Protocol-Version is a 400, the client's signa
 });
 
 test("initialize negotiates in its params, answers application/json and opens no MCP session", async (t) => {
-  on(t);
+  endpointOn(t);
   const init = await POST(mcp(
     { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } } },
     { headers: { "mcp-protocol-version": "2026-07-28" } },
@@ -116,7 +115,7 @@ test("initialize negotiates in its params, answers application/json and opens no
 });
 
 test("a notification alone gets 202 and no body; a batch gets an array of its answers", async (t) => {
-  on(t);
+  endpointOn(t);
   const notified = await POST(mcp({ jsonrpc: "2.0", method: "notifications/initialized" }, { headers: { "mcp-protocol-version": "2025-06-18" } }));
   assert.equal(notified.status, 202);
   assert.equal(await notified.text(), "");
@@ -125,13 +124,13 @@ test("a notification alone gets 202 and no body; a batch gets an array of its an
 });
 
 test("tools/list lists the eight tools", async (t) => {
-  on(t);
+  endpointOn(t);
   const listed = await (await POST(mcp({ jsonrpc: "2.0", id: 3, method: "tools/list" }, { headers: { "mcp-protocol-version": "2025-11-25" } }))).json();
   assert.equal(listed.result.tools.length, 8);
 });
 
 test("pi_sessions lists the saved session; a folder that does not exist is an error the model reads", async (t) => {
-  on(t);
+  endpointOn(t);
   const sessions = await callTool("pi_sessions", {});
   assert.equal(sessions.isError, false);
   assert.match(sessions.content[0].text, /mcp-route-seeded \[idle\] "Seeded question for the MCP route" in /);
@@ -141,7 +140,7 @@ test("pi_sessions lists the saved session; a folder that does not exist is an er
 });
 
 test("pi_read reads a saved session by its pi-web link, links on the request's Host, and starts no session", async (t) => {
-  on(t);
+  endpointOn(t);
   const text = (await callTool("pi_read", { session: "http://127.0.0.1:30999/?session=mcp-route-seeded" })).content[0].text;
   assert.match(text, /^Session mcp-route-seeded "Seeded question for the MCP route" in /);
   assert.match(text, /pi-web link: http:\/\/127\.0\.0\.1:30999\/\?session=mcp-route-seeded\n/, "links use the request's Host");
