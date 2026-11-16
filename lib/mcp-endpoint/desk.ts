@@ -2,6 +2,7 @@ import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, sep } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { isHiddenCustomMessage } from "../message-display";
 import { SESSION_ID_PATTERN } from "../session-ui-state-shared";
 import type { ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiResponse } from "../types";
@@ -202,14 +203,19 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
     for (const sendId of fates.missing) ledger.markMissing(sendId, observed?.now ?? clock.now());
   }
 
-  function label(id: string, transcript: TranscriptSource, converted: { messages: AgentMessage[]; entryIds: string[] }): LabeledMessages {
+  /** What the chat shows of converted messages, each with its author. */
+  function shownMessages(id: string, transcript: TranscriptSource, converted: { messages: AgentMessage[]; entryIds: string[] }): LabeledMessages {
     reconcile(id, transcript, null);
     const landed = new Set(ledger.forSession(id).flatMap((send) => send.placement.kind === "landed" ? [send.placement.entryId] : []));
-    const authors = converted.messages.map((message, index) => {
+    const messages: AgentMessage[] = [];
+    const authors: Author[] = [];
+    converted.messages.forEach((message, index) => {
+      if (isHiddenCustomMessage(message)) return;
       const entry = transcript.getEntry(converted.entryIds[index]);
-      return authorOf(message, { id: converted.entryIds[index], type: entry?.type ?? "message", time: entryTime(entry) }, landed, ledger.since);
+      messages.push(message);
+      authors.push(authorOf(message, { id: converted.entryIds[index], type: entry?.type ?? "message", time: entryTime(entry) }, landed, ledger.since));
     });
-    return { messages: converted.messages, authors };
+    return { messages, authors };
   }
 
   async function heading(id: SessionId, transcript: TranscriptSource): Promise<SessionHeading> {
@@ -259,7 +265,7 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
       const shown = {
         session: await heading(id, transcript),
         status,
-        page: { ...label(id, transcript, page), hasMore: page.hasMore, oldestEntryId: page.oldestEntryId },
+        page: { ...shownMessages(id, transcript, page), hasMore: page.hasMore, oldestEntryId: page.oldestEntryId },
       };
       if (before !== undefined) return { kind: "older", ...shown };
       return { kind: "latest", ...shown, cursor: { entryId: transcript.getLeafId(), dialogs: dialogDigest(status.dialogs.map((dialog) => dialog.id)), at: clock.now() } };
@@ -287,21 +293,21 @@ export function createDesk(ports: PiWebPorts, ledger: Ledger, clock: Clock = Dat
           const status = statusOf(id, live);
           reconcile(id, transcript, { status, now });
           const delta = branchSince(transcript, cursor.entryId, MAX_DELTA_ENTRIES);
+          const shown = shownMessages(id, transcript, ports.toMessages(delta.entries, id));
           const news = deliveryNews(ledger.forSession(id), cursor.at);
           const dialogs = dialogDigest(status.dialogs.map((dialog) => dialog.id));
           phase = stepRest(phase, {
             now, deadline, aborted: signal.aborted,
             running: status.running, subagentsActive: status.subagentsActive, sendsInFlight: status.sendsInFlight,
-            hasNews: delta.visible > 0 || delta.kind !== "since" || news.length > 0,
+            hasNews: shown.messages.length > 0 || delta.kind !== "since" || news.length > 0,
             dialogs, dialogCount: status.dialogs.length, shownDialogs: cursor.dialogs,
           });
           if (phase.kind === "done") {
-            const converted = ports.toMessages(delta.entries, id);
             return {
               reason: phase.reason === "timeout" && timeoutMs <= 0 ? "now" : phase.reason,
               waitedMs: now - started,
               status,
-              delta: { kind: delta.kind, omitted: delta.omitted, ...label(id, transcript, converted) },
+              delta: { kind: delta.kind, omitted: delta.omitted, ...shown },
               news,
               notices: [...watch.notices],
               cursor: { entryId: delta.leafId, dialogs, at: now },

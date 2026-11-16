@@ -37,8 +37,6 @@ export interface EntryLike {
   readonly type: string;
   readonly timestamp: string;
   readonly message?: { readonly role?: string; readonly content?: unknown };
-  readonly display?: boolean;
-  readonly summary?: string;
 }
 
 export interface BranchReader {
@@ -50,23 +48,7 @@ export interface Delta {
   readonly kind: "since" | "moved" | "unknown";
   readonly leafId: string | null;
   readonly entries: readonly EntryLike[];
-  readonly visible: number;
   readonly omitted: number;
-}
-
-export function isVisibleEntry(entry: EntryLike): boolean {
-  switch (entry.type) {
-    case "message":
-      return entry.message?.role !== "system";
-    case "compaction":
-      return true;
-    case "branch_summary":
-      return Boolean(entry.summary);
-    case "custom_message":
-      return entry.display === true;
-    default:
-      return false;
-  }
 }
 
 function chainFrom(reader: BranchReader, id: string | null, stopAt: (entry: EntryLike) => boolean): { chain: EntryLike[]; stop: EntryLike | null } {
@@ -83,7 +65,7 @@ export function branchSince(reader: BranchReader, cursorEntryId: string | null, 
   const delta = (kind: Delta["kind"], newestFirst: EntryLike[]): Delta => {
     const all = newestFirst.reverse();
     const entries = all.slice(Math.max(0, all.length - maxEntries));
-    return { kind, leafId, entries, visible: all.filter(isVisibleEntry).length, omitted: all.length - entries.length };
+    return { kind, leafId, entries, omitted: all.length - entries.length };
   };
   const toCursor = chainFrom(reader, leafId, (entry) => entry.id === cursorEntryId);
   if (cursorEntryId === null || toCursor.stop) return delta("since", toCursor.chain);
