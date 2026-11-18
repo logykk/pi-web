@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { randomBytes, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { realpath, stat } from "node:fs/promises";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { normalizeDirectory, resolveDirectory } from "../directory-browser";
 import { isBlockingExtensionUiRequest } from "../extension-ui-queue";
@@ -16,6 +17,8 @@ import {
   openSessionManager, resolveSessionPath,
 } from "../session-reader";
 import { hasUnsettledSubagentRun } from "../subagent-runtime";
+import { terminalSnapshot, terminalSnapshots, type TerminalSnapshot } from "../terminal-list";
+import { createTerminal, killTerminal, subscribeTerminal, writeTerminal } from "../terminal-manager";
 import { getToolNamesForPreset, type ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiRequest, ExtensionUiResponse, SessionEntry } from "../types";
 import { addWorktree, resolveProject, WorktreeBranchInUseError } from "../worktree";
@@ -206,15 +209,7 @@ export function piWebPorts(): PiWebPorts {
 
     registerLiveness: (id, isActive) => registerSessionLivenessProvider({ name: LIVENESS_PROVIDER_NAME, sessionId: id, isActive }),
 
-    async directory(path) {
-      let real: string;
-      try {
-        real = await resolveDirectory(path);
-      } catch {
-        return { kind: "missing", path: normalizeDirectory(path) };
-      }
-      return (await stat(real)).isDirectory() ? { kind: "directory", path: real } : { kind: "file", path: real };
-    },
+    directory: lookupDirectory,
 
     addWorktree: (dir, branch) => addWorktree(dir, branch).then(
       (created): WorktreeOutcome => ({ kind: "created", path: created.path, branch: created.branch }),
@@ -224,6 +219,109 @@ export function piWebPorts(): PiWebPorts {
       },
     ),
   };
+}
+
+async function lookupDirectory(path: string): Promise<DirectoryLookup> {
+  let real: string;
+  try {
+    real = await resolveDirectory(path);
+  } catch {
+    return { kind: "missing", path: normalizeDirectory(path) };
+  }
+  return (await stat(real)).isDirectory() ? { kind: "directory", path: real } : { kind: "file", path: real };
+}
+
+/** 32 lowercase hex: the only form a pi-web tab adopts (app/api/terminal/route.ts, terminal-tab-state.ts). */
+export type TerminalId = string & { readonly __brand: "TerminalId" };
+export type TerminalEnd = { readonly kind: "exited"; readonly code: number } | { readonly kind: "closed" };
+export type Foreground = { readonly kind: "shell" } | { readonly kind: "program"; readonly name: string } | { readonly kind: "unknown" };
+export type TerminalSignal = { readonly kind: "output" } | { readonly kind: "ended"; readonly end: TerminalEnd };
+
+export const AGENT_TERMINAL_SIZE = { cols: 120, rows: 40 } as const;
+
+export interface TerminalPorts {
+  terminals(): readonly TerminalSnapshot[];
+  terminal(id: TerminalId): TerminalSnapshot | null;
+  /** For folder matching: a browser's terminal keeps `path.resolve(cwd)`, and `samePath` is lexical. */
+  realpath(cwd: string): Promise<string>;
+  /** A shell in `cwd`, which pi-web's file access then allows, so the person's tab may attach. */
+  start(cwd: string): TerminalId;
+  /**
+   * An in-process listener: while attached, no cleanup is armed (the hold). The replay is not
+   * delivered. Null when the terminal is gone. The listener must never throw (TM's emit has no try).
+   */
+  hold(id: TerminalId, listener: (signal: TerminalSignal) => void): (() => void) | null;
+  write(id: TerminalId, data: string): boolean;
+  close(id: TerminalId): boolean;
+  /** Linux only: the terminal's foreground process group; elsewhere `unknown`. */
+  foreground(id: TerminalId): Foreground;
+  directory(path: string): Promise<DirectoryLookup>;
+}
+
+export function piWebTerminalPorts(): TerminalPorts {
+  return {
+    terminals: terminalSnapshots,
+    terminal: terminalSnapshot,
+    realpath: (cwd) => realpath(cwd).catch(() => cwd),
+    start(cwd) {
+      const id = createTerminal(cwd, AGENT_TERMINAL_SIZE.cols, AGENT_TERMINAL_SIZE.rows, randomBytes(16).toString("hex"));
+      allowFileRoot(cwd);
+      return id as TerminalId;
+    },
+    hold(id, listener) {
+      const subscription = subscribeTerminal(id, (event) => {
+        if (event.type === "output") listener({ kind: "output" });
+        else listener({ kind: "ended", end: event.type === "exit" ? { kind: "exited", code: event.exitCode } : { kind: "closed" } });
+      });
+      return subscription ? subscription.unsubscribe : null;
+    },
+    write: writeTerminal,
+    close: (id) => killTerminal(id),
+    foreground(id) {
+      const pid = terminalSnapshot(id)?.pid;
+      return pid === undefined || process.platform !== "linux" ? { kind: "unknown" } : linuxForeground(pid);
+    },
+    directory: lookupDirectory,
+  };
+}
+
+/** `/proc/<pid>/stat` after the command name: state, ppid, pgrp, session, tty_nr, tpgid, … */
+function procStat(pid: number): number[] {
+  const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  return stat.slice(stat.lastIndexOf(")") + 2).split(" ").map(Number);
+}
+
+function commOf(pid: number): string | null {
+  try {
+    return readFileSync(`/proc/${pid}/comm`, "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** A pipeline's group leader (`seq` in `seq 1 200 | less`) can be gone while the group still runs. */
+function groupMemberName(pgrp: number): string | null {
+  for (const entry of readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      if (procStat(Number(entry))[2] === pgrp) return commOf(Number(entry));
+    } catch {
+      // The process ended while we read.
+    }
+  }
+  return null;
+}
+
+/** The terminal's foreground group (tpgid): `pty.process` names only the group leader, wrong for pipelines. */
+function linuxForeground(shellPid: number): Foreground {
+  try {
+    const tpgid = procStat(shellPid)[5];
+    if (tpgid === shellPid) return { kind: "shell" };
+    if (!(tpgid > 0)) return { kind: "unknown" };
+    return { kind: "program", name: commOf(tpgid) ?? groupMemberName(tpgid) ?? "a program" };
+  } catch {
+    return { kind: "unknown" };
+  }
 }
 
 function text(value: unknown, fallback: string): string {
