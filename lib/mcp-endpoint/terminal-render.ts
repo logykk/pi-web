@@ -19,7 +19,7 @@ export interface RenderedSpan {
   readonly trimmed: boolean;
 }
 
-/** Injected into the terminal desk, whose tests run on mocked timers that would stall xterm's parser. */
+/** Injected into the terminal desk: `app/api/terminals/route.ts` imports the desk, and must not pull xterm into that route. */
 export type RenderSpan = (window: TerminalWindow, from: number, to: number) => Promise<RenderedSpan>;
 
 interface MarkedRow {
