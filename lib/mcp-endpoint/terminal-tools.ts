@@ -56,7 +56,7 @@ export function terminalTools(desk: TerminalDesk): ToolSpec[] {
         additionalProperties: false,
       },
       annotations: { openWorldHint: false },
-      run: async ({ cwd }) => renderTerminalOpen(await desk.open(cwd)),
+      run: async ({ cwd }, call) => renderTerminalOpen(await desk.open(cwd, call.signal)),
     }),
 
     endpointTool({

@@ -12,6 +12,8 @@ import {
 } from "./terminal-stream";
 
 const MAX_INPUTS = 50;
+/** How long `open` waits for a shell it started to print its first prompt. */
+const START_WAIT_MS = 10_000;
 const MAX_ENDED = 100;
 const ENDED_KEEP_MS = 60 * 60_000;
 const TERMINAL_ID = /^[0-9a-f]{32}$/;
@@ -149,7 +151,7 @@ export type TerminalCloseResult = { readonly kind: "closed"; readonly terminal: 
 
 export interface TerminalDesk {
   list(filter: { cwd?: string }): Promise<TerminalListResult>;
-  open(cwd: string): Promise<TerminalOpenResult>;
+  open(cwd: string, signal: AbortSignal): Promise<TerminalOpenResult>;
   read(id: TerminalId, before: TerminalCursor | null): Promise<TerminalReadResult>;
   send(id: TerminalId, input: AgentInputRequest, cursor: TerminalCursor | null, timeoutMs: number, signal: AbortSignal): Promise<TerminalSendResult>;
   wait(id: TerminalId, cursor: TerminalCursor, timeoutMs: number, signal: AbortSignal): Promise<TerminalWaitResult>;
@@ -314,7 +316,11 @@ export function createTerminalDesk(
     });
   }
 
-  async function watch(first: TerminalSnapshot, hold: Hold | null, cursor: number, timeoutMs: number, signal: AbortSignal): Promise<TerminalWaited> {
+  /**
+   * Observes until the wait rule says done. `startup`: the shell was just started, so its first
+   * output counts as a line that went in, and it is done once it reads a line.
+   */
+  async function settle(first: TerminalSnapshot, hold: Hold | null, cursor: number, timeoutMs: number, signal: AbortSignal, startup = false) {
     const id = first.id as TerminalId;
     const startedAt = clock.now();
     const deadline = startedAt + Math.min(Math.max(timeoutMs, 0), WAIT_MAX_MS);
@@ -334,29 +340,32 @@ export function createTerminalDesk(
         deadline,
         aborted: signal.aborted,
         end,
-        news: newsSince(window, from, typed.length > 0),
+        news: startup ? (window.offset > from ? "entered" : "none") : newsSince(window, from, typed.length > 0),
         overPage: pageEnd(window, from, PAGE) < window.offset,
         lastActivityAt: Math.max(hold?.lastOutputAt ?? 0, ...typed.map((input) => input.at)),
         front: frontOf(modes, modes.bracketedPaste === "unknown" && !end ? ports.foreground(id) : NO_FOREGROUND),
         endsInText: endsInText(window),
         alternateScreen: modes.alternateScreen,
       });
-      if (step.kind === "done") {
-        const { page, cursor: next } = await since(snapshot, cursor);
-        return {
-          kind: "waited",
-          reason: step.reason === "timeout" && timeoutMs <= 0 ? "now" : step.reason,
-          waitedMs: now - startedAt,
-          terminal: current ? info(current) : { ...info(snapshot), foreground: NO_FOREGROUND },
-          page,
-          typed,
-          cursor: next,
-          foreign: false,
-          live: end ? (await runningIn(await ports.realpath(snapshot.cwd))).map(info) : [],
-        };
-      }
+      if (step.kind === "done") return { reason: step.reason, waitedMs: now - startedAt, snapshot, current, typed, end };
       await nap(hold, step.recheckInMs, signal);
     }
+  }
+
+  async function watch(first: TerminalSnapshot, hold: Hold | null, cursor: number, timeoutMs: number, signal: AbortSignal): Promise<TerminalWaited> {
+    const { reason, waitedMs, snapshot, current, typed, end } = await settle(first, hold, cursor, timeoutMs, signal);
+    const { page, cursor: next } = await since(snapshot, cursor);
+    return {
+      kind: "waited",
+      reason: reason === "timeout" && timeoutMs <= 0 ? "now" : reason,
+      waitedMs,
+      terminal: current ? info(current) : { ...info(snapshot), foreground: NO_FOREGROUND },
+      page,
+      typed,
+      cursor: next,
+      foreign: false,
+      live: end ? (await runningIn(await ports.realpath(snapshot.cwd))).map(info) : [],
+    };
   }
 
   return {
@@ -368,7 +377,7 @@ export function createTerminalDesk(
       return { terminals: all.filter((_, index) => isPathWithinRoots(real[index], roots)).map(info) };
     },
 
-    async open(cwd) {
+    async open(cwd, signal) {
       const dir = await canonicalDirectory(ports, cwd);
       const joinable = (await runningIn(dir))[0];
       let snapshot = joinable;
@@ -382,7 +391,9 @@ export function createTerminalDesk(
         started.set(id, clock.now());
         const fresh = ports.terminal(id);
         if (!fresh) throw new ToolError(`The new shell in ${dir} ended at once.`);
-        snapshot = fresh;
+        // It has printed nothing yet. A cursor from before its first prompt would make the
+        // agent's first send read the prompt as the person typing, and type nothing.
+        snapshot = (await settle(fresh, touch(fresh), 0, START_WAIT_MS, signal, true)).current ?? fresh;
       }
       touch(snapshot);
       return { joined: joinable !== undefined, terminal: info(snapshot), ...await latest(snapshot, PAGE) };
