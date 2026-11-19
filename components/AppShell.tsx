@@ -22,7 +22,7 @@ import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
 import { SessionChatPanel } from "./SessionChatPanel";
 import { TerminalPanel } from "./TerminalPanel";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
-import { joinableTerminalTab } from "@/lib/terminal-join-client"; // Fork: /mcp terminals
+import { terminalTabFor } from "@/lib/terminal-join-client"; // Fork: /mcp terminals
 import { appendSideTab, restoreSideTabs, sideTabsKey } from "./side-tab-state";
 import { useTheme } from "@/hooks/useTheme";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
@@ -1342,7 +1342,7 @@ export function AppShell() {
   const handleOpenTerminal = useCallback(async (cwd: string) => {
     const existing = terminalTabs.find((tab) => tab.cwd === cwd);
     // Fork: the terminal button joins a live terminal an /mcp agent started or holds in this folder.
-    const tab = existing ?? await joinableTerminalTab(cwd) ?? newTerminalTab(cwd);
+    const tab = existing ?? await terminalTabFor(cwd);
     if (!existing) setTerminalTabs((tabs) => tabs.some((item) => item.id === tab.id) ? tabs : [...tabs, tab]);
     setActiveFileTabId(tab.id);
     setRightPanelOpen(true);
