@@ -77,7 +77,8 @@ export interface TerminalInfo {
   readonly cwd: string;
   readonly cols: number;
   readonly rows: number;
-  readonly state: TerminalState;
+  /** `closed`: TM no longer has it (Close, Restart or pi_terminal_close). */
+  readonly state: TerminalState | { readonly kind: "closed" };
   readonly foreground: Foreground;
   readonly front: Front;
   /** A pi-web tab streams it. */
@@ -359,7 +360,10 @@ export function createTerminalDesk(
       kind: "waited",
       reason: reason === "timeout" && timeoutMs <= 0 ? "now" : reason,
       waitedMs,
-      terminal: current ? info(current) : { ...info(snapshot), foreground: NO_FOREGROUND },
+      // TM dropped it: the last snapshot still reads as running and shown.
+      terminal: current ? info(current) : {
+        ...info(snapshot), state: end?.kind === "exited" ? end : { kind: "closed" }, foreground: NO_FOREGROUND, shownInPiWeb: false,
+      },
       page,
       typed,
       cursor: next,

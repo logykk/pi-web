@@ -32,6 +32,7 @@ function clip(text: string, max: number): string {
 }
 
 function stateOf(terminal: TerminalInfo): string {
+  if (terminal.state.kind === "closed") return "closed";
   if (terminal.state.kind === "exited") return `the shell exited with code ${terminal.state.code}`;
   if (terminal.foreground.kind === "program") return `${terminal.foreground.name} runs in front`;
   if (terminal.foreground.kind === "shell" || terminal.front === "line-editor") return "the shell reads a line";
@@ -42,7 +43,7 @@ function details(terminal: TerminalInfo): string {
   return [
     `${terminal.cols}x${terminal.rows}`,
     stateOf(terminal),
-    terminal.shownInPiWeb ? "open in pi-web" : "not open in pi-web",
+    ...(terminal.state.kind === "closed" ? [] : [terminal.shownInPiWeb ? "open in pi-web" : "not open in pi-web"]),
     ...(terminal.agentStarted ? ["started through these tools"] : []),
   ].join("; ");
 }
