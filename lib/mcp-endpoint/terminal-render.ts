@@ -7,11 +7,21 @@ export interface Screen {
   readonly cursor: { readonly row: number; readonly col: number };
 }
 
+/** Where typing lands. */
+export interface InputLine {
+  /** The cursor's logical line, wrapped rows joined. */
+  readonly text: string;
+  /** The cursor's column in it, 0-based. */
+  readonly col: number;
+}
+
 export interface RenderedSpan {
   /** Logical lines (wrapped rows joined) added or changed from `from` to `to`, oldest first. */
   readonly lines: readonly string[];
   /** The alternate screen at `to`, while a full-screen program shows one. */
   readonly screen: Screen | null;
+  /** The cursor's line at `to`, in the buffer that shows. */
+  readonly input: InputLine;
   /**
    * The checkpoint's line and every screen row above it are gone (`clear` erased them): `lines`
    * start at the oldest row left.
@@ -77,12 +87,23 @@ function logicalLines(buffer: IBuffer, first: number, last: number): string[] {
   return lines;
 }
 
-function takeCheckpoint(terminal: Terminal): Checkpoint {
-  const buffer = terminal.buffer.normal;
+/** The rows of the cursor's logical line. */
+function cursorLine(buffer: IBuffer): { cursor: number; start: number; end: number } {
   const cursor = buffer.baseY + buffer.cursorY;
-  const start = lineStart(buffer, cursor);
   let end = cursor;
   while (buffer.getLine(end + 1)?.isWrapped) end++;
+  return { cursor, start: lineStart(buffer, cursor), end };
+}
+
+function inputOf(terminal: Terminal): InputLine {
+  const buffer = terminal.buffer.active;
+  const { cursor, start, end } = cursorLine(buffer);
+  return { text: logicalLines(buffer, start, end)[0] ?? "", col: (cursor - start) * terminal.cols + buffer.cursorX };
+}
+
+function takeCheckpoint(terminal: Terminal): Checkpoint {
+  const buffer = terminal.buffer.normal;
+  const { cursor, start, end } = cursorLine(buffer);
   const mark = (row: number): MarkedRow => ({ row, marker: terminal.registerMarker(row - cursor), text: rowText(buffer, row) });
   const above: MarkedRow[] = [];
   for (let row = buffer.baseY; row < start; row++) above.push(mark(row));
@@ -142,7 +163,7 @@ export const renderSpan: RenderSpan = async (window, from, to) => {
     const checkpoint = terminal.buffer.active.type === "normal" ? takeCheckpoint(terminal) : null;
     await write(terminal, span);
     const news = checkpoint ? newsAfter(terminal, checkpoint) : { lines: [], trimmed: false };
-    return { ...news, screen: terminal.buffer.active.type === "alternate" ? screenOf(terminal) : null };
+    return { ...news, screen: terminal.buffer.active.type === "alternate" ? screenOf(terminal) : null, input: inputOf(terminal) };
   } finally {
     terminal.dispose();
   }

@@ -15,7 +15,7 @@ const TIMEOUT = { type: "integer", minimum: 0, maximum: WAIT_MAX_MS / 1000, defa
 export const TERMINAL_INSTRUCTIONS = [
   "Workspace terminals are shells on pi-web's machine that the person may be typing in at the same time, in pi-web's terminal tab: both of you type, both see everything.",
   "Join a folder's terminal (or start one) with pi_terminal_open; pi_terminals lists them. Run a command with pi_terminal_send {text, enter: true, cursor}: it types, then waits until the shell reads a line again, a program waits for input, or timeout_s passes. While a command runs, call pi_terminal_wait with the newest cursor.",
-  "With a cursor, pi_terminal_send types nothing if the terminal printed since it, so a repeated call never types twice and you never type into a line the person is editing. Never clear or edit a line you did not type. Send ctrl+c (or ctrl+z, ctrl+\\) alone, in its own call.",
+  "With a cursor, pi_terminal_send types nothing if a line went in or the line being typed changed since it, so a repeated call never types twice and you never type into a line the person is editing. Never clear or edit a line you did not type. Send ctrl+c (or ctrl+z, ctrl+\\) alone, in its own call.",
 ].join(" ");
 
 function terminalId(ref: string): TerminalId {
@@ -79,7 +79,7 @@ export function terminalTools(desk: TerminalDesk): ToolSpec[] {
     endpointTool({
       name: "pi_terminal_send",
       title: "Type into a workspace terminal",
-      description: "Type as the person's keyboard does: keys, then text, then Enter; then wait and report as pi_terminal_wait does. Run a command with text and enter: true; stop one with keys: \"ctrl+c\". With cursor, nothing is typed if the terminal printed since it (the person may be typing) or you already typed at it, so repeating a call whose reply was lost never types twice. Keys alone are always typed.",
+      description: "Type as the person's keyboard does: keys, then text, then Enter; then wait and report as pi_terminal_wait does. Run a command with text and enter: true; stop one with keys: \"ctrl+c\". With cursor, nothing is typed if a line went in or the line being typed changed since it (the person may be typing) or you already typed at it, so repeating a call whose reply was lost never types twice. Keys alone are always typed.",
       inputSchema: {
         type: "object",
         properties: {

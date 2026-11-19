@@ -187,7 +187,7 @@ export function renderTerminalWait(result: TerminalWaitResult): ToolText {
 
 const REFUSED: Readonly<Record<Extract<TerminalSendResult, { kind: "refused" }>["reason"], { headline: string; heading: string; next: string }>> = {
   changed: {
-    headline: "Nothing was typed: the terminal printed since your cursor, so the person may be typing.",
+    headline: "Nothing was typed: since your cursor a line went in or the line being typed changed, so the person may be typing.",
     heading: "Since your cursor:",
     next: "Never clear or edit a line you did not type. Send again with this cursor once the line is free (pi_terminal_wait tells you when a line went in), or omit cursor to type after what is there.",
   },

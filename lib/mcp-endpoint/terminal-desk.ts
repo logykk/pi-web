@@ -299,6 +299,20 @@ export function createTerminalDesk(
     return { page: { ...rendered, lost: Math.max(start - cursor, 0), more: to < window.offset, earlier: null }, cursor: to };
   }
 
+  /**
+   * Whether the line the agent would type into is not as its cursor left it: a line went in, or the
+   * cursor's line, the cursor's place in it or a full screen reads differently. Output that changes
+   * none of that, such as the shell drawing its line again when the person's tab joins or resizes
+   * the terminal, leaves the line free.
+   */
+  async function changedSince(snapshot: TerminalSnapshot, cursor: number): Promise<boolean> {
+    const window = windowOf(snapshot);
+    if (snapshot.offset <= cursor) return false;
+    if (cursor < windowStart(window) || newsSince(window, cursor, false) === "entered") return true;
+    const [then, now] = await Promise.all([render(window, cursor, cursor), render(window, window.offset, window.offset)]);
+    return JSON.stringify([then.input, then.screen]) !== JSON.stringify([now.input, now.screen]);
+  }
+
   function typedSince(hold: Hold | null, offset: number): AgentInput[] {
     return hold?.inputs.filter((input) => input.offset >= offset) ?? [];
   }
@@ -433,7 +447,7 @@ export function createTerminalDesk(
         const typed = typedSince(hold, cursor.offset);
         const reason = isForeign(id, cursor, snapshot) ? "foreign"
           : typed.length > 0 ? "already-typed"
-          : snapshot.offset > cursor.offset ? "changed"
+          : await changedSince(snapshot, cursor.offset) ? "changed"
           : null;
         if (reason) {
           const shown = reason === "foreign" ? await latest(snapshot, PAGE) : await since(snapshot, cursor.offset);
