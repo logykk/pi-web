@@ -123,10 +123,28 @@ test("a notification alone gets 202 and no body; a batch gets an array of its an
   assert.deepEqual(await batch.json(), [{ jsonrpc: "2.0", id: 2, result: {} }]);
 });
 
-test("tools/list lists the eight tools", async (t) => {
+test("tools/list lists the fourteen tools", async (t) => {
   endpointOn(t);
   const listed = await (await POST(mcp({ jsonrpc: "2.0", id: 3, method: "tools/list" }, { headers: { "mcp-protocol-version": "2025-11-25" } }))).json();
-  assert.equal(listed.result.tools.length, 8);
+  assert.equal(listed.result.tools.length, 14);
+});
+
+test("a terminal end to end: open starts a shell, send runs a command and reports it once the shell reads again, close ends it", { skip: process.platform === "win32" }, async (t) => {
+  endpointOn(t);
+  const cwd = await mkdtemp(join(agentDir, "terminal-"));
+  withEnv(t, { SHELL: "/bin/bash", HOME: cwd });
+  const opened = await callTool("pi_terminal_open", { cwd });
+  assert.equal(opened.isError, false);
+  const id = /terminal ([0-9a-f]{32})/.exec(opened.content[0].text)[1];
+  const cursor = (text) => /\ncursor: (\S+)$/.exec(text)[1];
+  const sent = await callTool("pi_terminal_send", { terminal: id, text: "echo route-$((6*7))", enter: true, cursor: cursor(opened.content[0].text), timeout_s: 20 });
+  const lines = sent.content[0].text.split("\n");
+  assert.equal(lines[0], 'Typed "echo route-$((6*7))" enter.');
+  assert.match(lines[1], /^A line went in and the shell \(or REPL\) reads a line again/);
+  assert.ok(lines.includes("| route-42"), sent.content[0].text);
+  const closed = await callTool("pi_terminal_close", { terminal: id });
+  assert.match(closed.content[0].text, /^Closed terminal [0-9a-f]{32} in .*: its shell ended for everyone\./);
+  assert.match((await callTool("pi_terminal_read", { terminal: id })).content[0].text, /^You closed terminal/);
 });
 
 test("pi_sessions lists the saved session; a folder that does not exist is an error the model reads", async (t) => {

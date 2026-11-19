@@ -3,11 +3,14 @@ import packageJson from "../../package.json";
 import { TOOL_PRESET_VALUES } from "../tool-presets";
 import { createDesk, createDeskMemory, ToolError, parseSessionRef, WAIT_DEFAULT_MS, WAIT_MAX_MS, type Desk, type SessionId } from "./desk";
 import { endpointTool, type EndpointServer, type ToolSpec } from "./jsonrpc";
-import { piWebPorts } from "./ports";
+import { piWebPorts, piWebTerminalPorts } from "./ports";
 import { processGlobal } from "./process-global";
 import {
   renderAnswer, renderNewSession, renderRead, renderSend, renderSessionList, renderStop, renderWait, renderWorktree,
 } from "./replies";
+import { createTerminalDesk, type TerminalDesk } from "./terminal-desk";
+import { renderSpan } from "./terminal-render";
+import { TERMINAL_INSTRUCTIONS, terminalTools } from "./terminal-tools";
 import { decodeCursor, type Cursor } from "./transcript";
 
 const SESSION = { type: "string", minLength: 1, description: "The session id, or the pi-web link the person has open (…/?session=<id>)." } as const;
@@ -21,6 +24,7 @@ const INSTRUCTIONS = [
   "Every reply about a session ends with `cursor: …`. Always pass the newest cursor to pi_wait (and pi_send). If a call fails or its reply is lost, repeat it with the same cursor: nothing moved.",
   "User messages are labeled [agent] (sent through these tools), [person] (typed in pi-web) or [user] (unknown, from before pi-web last restarted). pi's replies are [pi].",
   "pi_stop stops pi for the person too. When an extension asks a question, the reply shows it with the pi_answer call that answers it; the person sees the same question and the first answer counts.",
+  TERMINAL_INSTRUCTIONS,
 ].join("\n\n");
 
 function createTools(desk: Desk): ToolSpec[] {
@@ -177,13 +181,13 @@ function createTools(desk: Desk): ToolSpec[] {
   ];
 }
 
-export function serverFor(desk: Desk): EndpointServer {
+export function serverFor(desk: Desk, terminals: TerminalDesk): EndpointServer {
   return {
     name: "pi-web",
     title: "pi-web",
     version: packageJson.version,
     instructions: INSTRUCTIONS,
-    tools: createTools(desk),
+    tools: [...createTools(desk), ...terminalTools(terminals)],
     isToolError: (error) => error instanceof ToolError,
   };
 }
@@ -191,7 +195,7 @@ export function serverFor(desk: Desk): EndpointServer {
 let server: EndpointServer | null = null;
 
 export function mcpServer(): EndpointServer {
-  server ??= serverFor(createDesk(piWebPorts(), processGlobal("desk-memory", createDeskMemory)));
+  server ??= serverFor(createDesk(piWebPorts(), processGlobal("desk-memory", createDeskMemory)), createTerminalDesk(piWebTerminalPorts(), renderSpan));
   return server;
 }
 
