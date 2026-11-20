@@ -10,7 +10,7 @@ This is a soft fork of [agegr/pi-web](https://github.com/agegr/pi-web) that trac
 
 The endpoint is off until `PI_WEB_MCP_TOKEN` is set. Setup and the full tool list are in [docs/mcp-endpoint.md](./docs/mcp-endpoint.md).
 
-The fork also lets `npm run dev` serve the hostnames in `PI_WEB_ALLOWED_HOSTS`, as the production server does, so the development server works behind a tunnel. The npm package `@agegr/pi-web` is upstream's and has none of this; run the fork from a clone of this repository.
+The npm package `@agegr/pi-web` is upstream's and has none of this; run the fork from a clone of this repository.
 
 [中文文档](./docs/README.zh-CN.md) | [日本語](./docs/README.ja.md) | [Русский](./docs/README.ru.md)
 

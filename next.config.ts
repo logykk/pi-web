@@ -77,8 +77,6 @@ const nextConfig: NextConfig = {
     "172.30.*.*",
     "172.31.*.*",
     "192.168.*.*",
-    // Fork: the proxy hostnames pi-web trusts reach the dev server too.
-    ...(process.env.PI_WEB_ALLOWED_HOSTS?.split(",").map((host) => host.trim()).filter(Boolean) ?? []),
   ],
   async headers() {
     return [
