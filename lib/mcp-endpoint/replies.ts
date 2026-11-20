@@ -9,19 +9,19 @@ import { isBusy } from "./rest";
 import type { SentMessage } from "./session-ledger";
 import { contentText, encodeCursor, type Author, type Cursor } from "./transcript";
 
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-function oneLine(text: string, max: number): string {
+export function oneLine(text: string, max: number): string {
   return clip(text.replace(/\s+/g, " ").trim(), max);
 }
 
-function plural(count: number, noun: string, nouns = `${noun}s`): string {
+export function plural(count: number, noun: string, nouns = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : nouns}`;
 }
 
-function callExample(tool: string, args: Readonly<Record<string, unknown>>): string {
+export function callExample(tool: string, args: Readonly<Record<string, unknown>>): string {
   return `${tool} ${JSON.stringify(args)}`;
 }
 

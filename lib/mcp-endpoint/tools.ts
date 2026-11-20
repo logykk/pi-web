@@ -1,9 +1,11 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import packageJson from "../../package.json";
 import { TOOL_PRESET_VALUES } from "../tool-presets";
+import { CATALOG_KINDS, readCatalog, type CatalogSource } from "./catalog";
+import { renderCatalog } from "./catalog-replies";
 import { createDesk, createDeskMemory, ToolError, parseSessionRef, WAIT_DEFAULT_MS, WAIT_MAX_MS, type Desk, type SessionId } from "./desk";
 import { endpointTool, type EndpointServer, type ToolSpec } from "./jsonrpc";
-import { piWebPorts, piWebTerminalPorts } from "./ports";
+import { piWebCatalog, piWebPorts, piWebTerminalPorts } from "./ports";
 import { processGlobal } from "./process-global";
 import {
   renderAnswer, renderNewSession, renderRead, renderSend, renderSessionList, renderStop, renderWait, renderWorktree,
@@ -20,6 +22,7 @@ const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as 
 const INSTRUCTIONS = [
   "These tools work in pi sessions of a pi-web server. A person may be using the same session in pi-web's browser UI at the same time: both of you send messages, both see everything.",
   "Find a session with pi_sessions (or take the pi-web link the person gives you), or start one with pi_new_session (pi_new_worktree first for a fresh branch).",
+  "pi_catalog lists what pi has in a folder: its models (the model argument of pi_new_session), skills, MCP servers, subagent profiles and plugins.",
   `Join a session with pi_read. Send with pi_send: it returns once pi has taken the message, queued behind any run in progress, the person's included. Then call pi_wait until it says pi is at rest; each wait lasts at most ${WAIT_MAX_MS / 1000} s, so call it again while pi is working.`,
   "Every reply about a session ends with `cursor: …`. Always pass the newest cursor to pi_wait (and pi_send). If a call fails or its reply is lost, repeat it with the same cursor: nothing moved.",
   "User messages are labeled [agent] (sent through these tools), [person] (typed in pi-web) or [user] (unknown, from before pi-web last restarted). pi's replies are [pi].",
@@ -27,7 +30,7 @@ const INSTRUCTIONS = [
   TERMINAL_INSTRUCTIONS,
 ].join("\n\n");
 
-function createTools(desk: Desk): ToolSpec[] {
+function createTools(desk: Desk, catalog: CatalogSource): ToolSpec[] {
   return [
     endpointTool({
       name: "pi_sessions",
@@ -178,16 +181,33 @@ function createTools(desk: Desk): ToolSpec[] {
       annotations: { idempotentHint: true, openWorldHint: false },
       run: async (request, call) => renderWorktree(await desk.newWorktree(request, call.signal)),
     }),
+
+    endpointTool({
+      name: "pi_catalog",
+      title: "List what pi has in a folder",
+      description: "List what pi has configured, as pi sees it in a folder: models with the default model and thinking level, skills, MCP servers, subagent profiles and plugins. Without kind, a short overview of each; with kind, that one in full. Changes nothing and starts nothing.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          cwd: { type: "string", minLength: 1, description: "Absolute path (or ~/…) of a folder pi-web knows: one a session or terminal uses." },
+          kind: { type: "string", enum: CATALOG_KINDS, description: "Show this one in full: models (provider/modelId, the form pi_new_session takes), skills, mcp, subagents or plugins." },
+        },
+        required: ["cwd"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      run: async ({ cwd, kind }) => renderCatalog(await readCatalog(catalog, cwd, kind)),
+    }),
   ];
 }
 
-export function serverFor(desk: Desk, terminals: TerminalDesk): EndpointServer {
+export function serverFor(desk: Desk, terminals: TerminalDesk, catalog: CatalogSource): EndpointServer {
   return {
     name: "pi-web",
     title: "pi-web",
     version: packageJson.version,
     instructions: INSTRUCTIONS,
-    tools: [...createTools(desk), ...terminalTools(terminals)],
+    tools: [...createTools(desk, catalog), ...terminalTools(terminals)],
     isToolError: (error) => error instanceof ToolError,
   };
 }
@@ -195,7 +215,11 @@ export function serverFor(desk: Desk, terminals: TerminalDesk): EndpointServer {
 let server: EndpointServer | null = null;
 
 export function mcpServer(): EndpointServer {
-  server ??= serverFor(createDesk(piWebPorts(), processGlobal("desk-memory", createDeskMemory)), createTerminalDesk(piWebTerminalPorts(), renderSpan));
+  server ??= serverFor(
+    createDesk(piWebPorts(), processGlobal("desk-memory", createDeskMemory)),
+    createTerminalDesk(piWebTerminalPorts(), renderSpan),
+    piWebCatalog(),
+  );
   return server;
 }
 
