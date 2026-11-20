@@ -283,6 +283,47 @@ html[data-theme="zenburn"],
   --bg-subtle: rgba(220,220,204,0.04);
 }
 
+/* Fork: Zenith themes, accent #5d45b6 (light) and #ac8ff8 (dark). Each variable has the tinted pairs' lightness (Mist/Pine, Lilac/Dusk,
+   Sand/Ember) and the accent's hue, with Lilac/Dusk's tint chroma. */
+[data-theme="zenith-light"] {
+  color-scheme: light;
+  --bg: #f7f6fd;
+  --bg-panel: #edebf8;
+  --bg-hover: #e6e3f5;
+  --bg-selected: #dedaf2;
+  --border: #bfbade;
+  --text: #2a2838;
+  --text-muted: #55506f;
+  --text-dim: #5f5a79;
+  --accent: #5d45b6;
+  --accent-hover: #4b3698;
+  --accent-contrast: #ffffff;
+  --user-bg: #eae6fc;
+  --assistant-bg: #f7f6fd;
+  --tool-bg: #f1effa;
+  --bg-subtle: rgba(41,28,86,0.04);
+}
+
+html[data-theme="zenith-dark"],
+[data-theme="zenith-dark"] {
+  color-scheme: dark;
+  --bg: #1c1b26;
+  --bg-panel: #242332;
+  --bg-hover: #2e2c3d;
+  --bg-selected: #38364b;
+  --border: #4e4e72;
+  --text: #e8e7f2;
+  --text-muted: #c6c3da;
+  --text-dim: #b1afcb;
+  --accent: #ac8ff8;
+  --accent-hover: #bfaef4;
+  --accent-contrast: #27124b;
+  --user-bg: #2d2a3f;
+  --assistant-bg: #1c1b26;
+  --tool-bg: #232230;
+  --bg-subtle: rgba(220,218,248,0.04);
+}
+
 /* WebKit reports dvh/innerHeight without the status-bar strip for installed
    home-screen apps even though the layout still starts at the screen's top.
    In standalone mode there is no browser toolbar to make vh unstable, and vh

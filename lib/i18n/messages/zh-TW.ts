@@ -48,6 +48,8 @@ export const zhTWLocale: LocalePlugin = {
     "settings.themeContrastLight": "高對比淺色",
     "settings.themeContrastDark": "高對比深色",
     "settings.themeZenburn": "Zenburn",
+    "settings.themeZenithLight": "Zenith 淺色",
+    "settings.themeZenithDark": "Zenith 深色",
     "settings.themeSystem": "跟隨系統",
     "settings.thinkingExpandedDefault": "預設展開思考區塊",
     "settings.chat": "對話",
