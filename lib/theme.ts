@@ -16,6 +16,9 @@ export const THEME_OPTIONS = [
   { id: "contrast-light", label: "settings.themeContrastLight", scheme: "light" },
   { id: "contrast-dark", label: "settings.themeContrastDark", scheme: "dark" },
   { id: "zenburn", label: "settings.themeZenburn", scheme: "dark" },
+  // Fork: the Zenith pair, a last row of two.
+  { id: "zenith-light", label: "settings.themeZenithLight", scheme: "light" },
+  { id: "zenith-dark", label: "settings.themeZenithDark", scheme: "dark" },
 ] as const;
 
 export type ThemePreference = (typeof THEME_OPTIONS)[number]["id"];

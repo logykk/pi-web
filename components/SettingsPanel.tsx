@@ -252,7 +252,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
                 key={option.id}
                 className="settings-theme-option"
                 data-system={option.id === "auto" || undefined}
-                data-wide={option.id === "contrast-light" || option.id === "contrast-dark" || option.id === "zenburn" || undefined}
+                data-wide={option.id === "contrast-light" || option.id === "contrast-dark" || option.id === "zenburn" || option.id.startsWith("zenith-") || undefined}
               >
                 <input
                   type="radio"

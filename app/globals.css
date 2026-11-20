@@ -283,6 +283,46 @@ html[data-theme="zenburn"],
   --bg-subtle: rgba(220,220,204,0.04);
 }
 
+/* Fork: Zenith themes. Background, tint (selected, user messages) and accent are given; the rest sits between them in Lab. */
+[data-theme="zenith-light"] {
+  color-scheme: light;
+  --bg: #f6f5f8;
+  --bg-panel: #f0eff9;
+  --bg-hover: #eeecfa;
+  --bg-selected: #ebe9fa;
+  --border: #c2bfd5;
+  --text: #242327;
+  --text-muted: #5a595e;
+  --text-dim: #636368;
+  --accent: #5d45b6;
+  --accent-hover: #4935a2;
+  --accent-contrast: #ffffff;
+  --user-bg: #ebe9fa;
+  --assistant-bg: #f6f5f8;
+  --tool-bg: #f2f2f8;
+  --bg-subtle: rgba(60,40,140,0.04);
+}
+
+html[data-theme="zenith-dark"],
+[data-theme="zenith-dark"] {
+  color-scheme: dark;
+  --bg: #0a0a0d;
+  --bg-panel: #141022;
+  --bg-hover: #17142f;
+  --bg-selected: #1f1b3f;
+  --border: #3b3555;
+  --text: #e9e7ef;
+  --text-muted: #bcbbc2;
+  --text-dim: #a6a5ac;
+  --accent: #5d45b6;
+  --accent-hover: #7358cc;
+  --accent-contrast: #ffffff;
+  --user-bg: #181535;
+  --assistant-bg: #0a0a0d;
+  --tool-bg: #110e1a;
+  --bg-subtle: rgba(200,190,255,0.04);
+}
+
 /* WebKit reports dvh/innerHeight without the status-bar strip for installed
    home-screen apps even though the layout still starts at the screen's top.
    In standalone mode there is no browser toolbar to make vh unstable, and vh
