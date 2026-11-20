@@ -8,12 +8,6 @@ import { terminalSnapshots } from "@/lib/terminal-list";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/**
- * Fork (/mcp terminals): the running terminals in `cwd` that an /mcp agent started or holds, newest
- * agent touch first, for pi-web's terminal button to join. Folders match by real path: a browser's
- * terminal keeps `path.resolve(cwd)`, an agent's the real path. A person's own terminals are never
- * listed, so two browser windows still get a shell each, as upstream.
- */
 export async function GET(req: Request) {
   const cwd = new URL(req.url).searchParams.get("cwd");
   if (!cwd?.trim()) return NextResponse.json({ error: "cwd required" }, { status: 400 });

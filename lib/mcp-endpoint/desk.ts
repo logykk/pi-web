@@ -163,10 +163,6 @@ function userEntries(transcript: TranscriptSource): UserEntry[] {
     .map((entry) => ({ entryId: entry.id, text: contentText(entry.message?.content), time: entryTime(entry) }));
 }
 
-/**
- * Every folder argument, as the directory picker resolves it: absolute or `~/…`, an existing
- * directory, by its realpath. A relative path never reaches the filesystem.
- */
 export async function canonicalDirectory(ports: Pick<PiWebPorts, "directory">, input: string): Promise<string> {
   const path = input.trim();
   if (path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) {

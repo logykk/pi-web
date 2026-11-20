@@ -231,7 +231,6 @@ async function lookupDirectory(path: string): Promise<DirectoryLookup> {
   return (await stat(real)).isDirectory() ? { kind: "directory", path: real } : { kind: "file", path: real };
 }
 
-/** 32 lowercase hex: the only form a pi-web tab adopts (app/api/terminal/route.ts, terminal-tab-state.ts). */
 export type TerminalId = string & { readonly __brand: "TerminalId" };
 export type TerminalEnd = { readonly kind: "exited"; readonly code: number } | { readonly kind: "closed" };
 export type Foreground = { readonly kind: "shell" } | { readonly kind: "program"; readonly name: string } | { readonly kind: "unknown" };
@@ -242,18 +241,11 @@ export const AGENT_TERMINAL_SIZE = { cols: 120, rows: 40 } as const;
 export interface TerminalPorts {
   terminals(): readonly TerminalSnapshot[];
   terminal(id: TerminalId): TerminalSnapshot | null;
-  /** For folder matching: a browser's terminal keeps `path.resolve(cwd)`, and `samePath` is lexical. */
   realpath(cwd: string): Promise<string>;
-  /** A shell in `cwd`, which pi-web's file access then allows, so the person's tab may attach. */
   start(cwd: string): TerminalId;
-  /**
-   * An in-process listener: while attached, no cleanup is armed (the hold). The replay is not
-   * delivered. Null when the terminal is gone. The listener must never throw (TM's emit has no try).
-   */
   hold(id: TerminalId, listener: (signal: TerminalSignal) => void): (() => void) | null;
   write(id: TerminalId, data: string): boolean;
   close(id: TerminalId): boolean;
-  /** Linux only: the terminal's foreground process group; elsewhere `unknown`. */
   foreground(id: TerminalId): Foreground;
   directory(path: string): Promise<DirectoryLookup>;
 }
@@ -305,9 +297,7 @@ function groupMemberName(pgrp: number): string | null {
     if (!/^\d+$/.test(entry)) continue;
     try {
       if (procStat(Number(entry))[2] === pgrp) return commOf(Number(entry));
-    } catch {
-      // The process ended while we read.
-    }
+    } catch {}
   }
   return null;
 }

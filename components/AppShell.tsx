@@ -1341,7 +1341,7 @@ export function AppShell() {
 
   const handleOpenTerminal = useCallback(async (cwd: string) => {
     const existing = terminalTabs.find((tab) => tab.cwd === cwd);
-    // Fork: the terminal button joins a live terminal an /mcp agent started or holds in this folder.
+    // Fork: /mcp terminals
     const tab = existing ?? await terminalTabFor(cwd);
     if (!existing) setTerminalTabs((tabs) => tabs.some((item) => item.id === tab.id) ? tabs : [...tabs, tab]);
     setActiveFileTabId(tab.id);

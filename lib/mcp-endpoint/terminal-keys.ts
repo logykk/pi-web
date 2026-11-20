@@ -2,7 +2,6 @@ import { applyTerminalModifiers, terminalExtraKeySequence, type TerminalExtraKey
 import { asBracketedPaste } from "../terminal-input";
 import type { StreamModes } from "./terminal-stream";
 
-/** The cap of the person's input route (`POST /api/terminal/[id]`). */
 export const MAX_TEXT_UNITS = 65_536;
 const MAX_KEYS = 64;
 
@@ -63,12 +62,6 @@ export type EncodedInput =
   | { readonly ok: true; readonly data: string; readonly shown: string }
   | { readonly ok: false; readonly error: string };
 
-/**
- * The bytes the person's xterm would send for keys, then text, then Enter, as one write so the
- * person's keystrokes never land inside it. Arrows follow the program's cursor-key mode. Text is
- * typed with line breaks as Enter (`\r`), and multi-line text is pasted the way xterm pastes it
- * when the program asked for bracketed paste.
- */
 export function encodeInput(request: AgentInputRequest, modes: Pick<StreamModes, "applicationCursorKeys" | "bracketedPaste">): EncodedInput {
   const tokens = request.keys?.trim() ? request.keys.trim().split(/\s+/) : [];
   const text = request.text ?? "";

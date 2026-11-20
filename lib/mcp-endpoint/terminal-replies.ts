@@ -22,7 +22,6 @@ function cursorLine(id: string, offset: number): string {
   return `cursor: ${encodeTerminalCursor(id, offset)}`;
 }
 
-/** Terminal text, marked so it never reads as pi-web's words. */
 function bar(text: string): string {
   return text ? `| ${text}` : "|";
 }

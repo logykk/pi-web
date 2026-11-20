@@ -12,7 +12,6 @@ import {
 } from "./terminal-stream";
 
 const MAX_INPUTS = 50;
-/** How long `open` waits for a shell it started to print its first prompt. */
 const START_WAIT_MS = 10_000;
 const MAX_ENDED = 100;
 const ENDED_KEEP_MS = 60 * 60_000;
@@ -24,13 +23,11 @@ export function parseTerminalId(input: string): TerminalId | null {
 }
 
 export interface AgentInput {
-  /** TM's offset when it was written. */
   readonly offset: number;
   readonly shown: string;
   readonly at: number;
 }
 
-/** The agent's presence in one terminal: an in-process listener, so TM arms no cleanup while it lasts. */
 interface Hold {
   touchedAt: number;
   lastOutputAt: number;
@@ -47,12 +44,9 @@ export interface Ended {
   readonly by: "agent" | "elsewhere";
 }
 
-/** Under its own `processGlobal` name: a field added to `DeskMemory` would be missing after a hot reload. */
 export interface TerminalDeskMemory {
   readonly holds: Map<TerminalId, Hold>;
-  /** Started through /mcp, at. */
   readonly started: Map<TerminalId, number>;
-  /** Terminals that ended while held or that the agent closed: at most 100, each for 1 h. */
   readonly ended: Map<TerminalId, Ended>;
 }
 
@@ -64,7 +58,6 @@ function memory(): TerminalDeskMemory {
   return processGlobal("terminal-desk", createTerminalDeskMemory);
 }
 
-/** Terminals an agent started or holds, newest agent touch first: the ones pi-web's terminal button joins. */
 export function agentTerminalIds(): ReadonlySet<string> {
   const { holds, started } = memory();
   const touched = new Map<string, number>(started);
@@ -77,21 +70,16 @@ export interface TerminalInfo {
   readonly cwd: string;
   readonly cols: number;
   readonly rows: number;
-  /** `closed`: TM no longer has it (Close, Restart or pi_terminal_close). */
   readonly state: TerminalState | { readonly kind: "closed" };
   readonly foreground: Foreground;
   readonly front: Front;
-  /** A pi-web tab streams it. */
   readonly shownInPiWeb: boolean;
   readonly agentStarted: boolean;
 }
 
 export interface TerminalPage extends RenderedSpan {
-  /** Units that left TM's backlog before the agent read them. */
   readonly lost: number;
-  /** More output after this page: the next wait returns it at once. */
   readonly more: boolean;
-  /** Where the page before this one ends, when the backlog keeps one. */
   readonly earlier: number | null;
 }
 
@@ -100,7 +88,6 @@ export interface GoneResult {
   readonly id: TerminalId;
   readonly ended: Ended;
   readonly agoMs: number;
-  /** The folder's running terminals now. */
   readonly live: readonly TerminalInfo[];
 }
 
@@ -126,11 +113,9 @@ export interface TerminalWaited {
   readonly waitedMs: number;
   readonly terminal: TerminalInfo;
   readonly page: TerminalPage;
-  /** The agent's own inputs at or after the cursor; anything else came from the person or a program. */
   readonly typed: readonly AgentInput[];
   readonly cursor: number;
   readonly foreign: boolean;
-  /** When the terminal ended: the folder's running terminals now. */
   readonly live: readonly TerminalInfo[];
 }
 
@@ -192,7 +177,6 @@ export function createTerminalDesk(
     pruneEnded(clock.now());
   }
 
-  /** Subscribes on the first touch; every touch re-arms the HOLD_MS release. None for a shell that already exited. */
   function touch(snapshot: TerminalSnapshot): Hold | null {
     const id = snapshot.id as TerminalId;
     const now = clock.now();
@@ -200,7 +184,6 @@ export function createTerminalDesk(
     if (!hold) {
       if (snapshot.state.kind === "exited") return null;
       const created: Hold = { touchedAt: now, lastOutputAt: now, inputs: [], wakers: new Set(), release: () => {}, timer: undefined };
-      // Old code after a hot reload, so it stays small, and never throws into TM's emit.
       const unsubscribe = ports.hold(id, (signal: TerminalSignal) => {
         try {
           if (signal.kind === "output") created.lastOutputAt = clock.now();
@@ -209,9 +192,7 @@ export function createTerminalDesk(
             created.release();
           }
           for (const wake of created.wakers) wake();
-        } catch {
-          // Nothing a hold does may break the person's stream.
-        }
+        } catch {}
       });
       if (!unsubscribe) return null;
       created.release = () => {
@@ -237,7 +218,6 @@ export function createTerminalDesk(
     return snapshot.listeners - (holds.has(snapshot.id as TerminalId) ? 1 : 0) > 0;
   }
 
-  /** The terminal now: a touch since the snapshot added the hold's listener. */
   function info(taken: TerminalSnapshot): TerminalInfo {
     const snapshot = ports.terminal(taken.id as TerminalId) ?? taken;
     const id = snapshot.id as TerminalId;
@@ -262,7 +242,6 @@ export function createTerminalDesk(
     return all;
   }
 
-  /** The folder's running terminals: one a pi-web tab shows first, then the one an agent touched last, then the newest. */
   async function runningIn(dir: string): Promise<TerminalSnapshot[]> {
     const running = terminals().filter((snapshot) => snapshot.state.kind === "running");
     const real = await realpaths(running);
@@ -289,7 +268,6 @@ export function createTerminalDesk(
     return { page: { ...rendered, lost: 0, more: false, earlier: from > windowStart(window) ? from : null }, cursor: window.offset };
   }
 
-  /** The page after `cursor`; the next cursor is where it ends. */
   async function since(snapshot: TerminalSnapshot, cursor: number): Promise<{ page: TerminalPage; cursor: number }> {
     const window = windowOf(snapshot);
     const start = windowStart(window);
@@ -299,12 +277,6 @@ export function createTerminalDesk(
     return { page: { ...rendered, lost: Math.max(start - cursor, 0), more: to < window.offset, earlier: null }, cursor: to };
   }
 
-  /**
-   * Whether the line the agent would type into is not as its cursor left it: a line went in, or the
-   * cursor's line, the cursor's place in it or a full screen reads differently. Output that changes
-   * none of that, such as the shell drawing its line again when the person's tab joins or resizes
-   * the terminal, leaves the line free.
-   */
   async function changedSince(snapshot: TerminalSnapshot, cursor: number): Promise<boolean> {
     const window = windowOf(snapshot);
     if (snapshot.offset <= cursor) return false;
@@ -331,10 +303,6 @@ export function createTerminalDesk(
     });
   }
 
-  /**
-   * Observes until the wait rule says done. `startup`: the shell was just started, so its first
-   * output counts as a line that went in, and it is done once it reads a line.
-   */
   async function settle(first: TerminalSnapshot, hold: Hold | null, cursor: number, timeoutMs: number, signal: AbortSignal, startup = false) {
     const id = first.id as TerminalId;
     const startedAt = clock.now();
@@ -374,7 +342,6 @@ export function createTerminalDesk(
       kind: "waited",
       reason: reason === "timeout" && timeoutMs <= 0 ? "now" : reason,
       waitedMs,
-      // TM dropped it: the last snapshot still reads as running and shown.
       terminal: current ? info(current) : {
         ...info(snapshot), state: end?.kind === "exited" ? end : { kind: "closed" }, foreground: NO_FOREGROUND, shownInPiWeb: false,
       },
@@ -409,8 +376,6 @@ export function createTerminalDesk(
         started.set(id, clock.now());
         const fresh = ports.terminal(id);
         if (!fresh) throw new ToolError(`The new shell in ${dir} ended at once.`);
-        // It has printed nothing yet. A cursor from before its first prompt would make the
-        // agent's first send read the prompt as the person typing, and type nothing.
         snapshot = (await settle(fresh, touch(fresh), 0, START_WAIT_MS, signal, true)).current ?? fresh;
       }
       touch(snapshot);

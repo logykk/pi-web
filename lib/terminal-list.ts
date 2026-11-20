@@ -6,21 +6,14 @@ export interface TerminalSnapshot {
   readonly pid: number;
   readonly cols: number;
   readonly rows: number;
-  /** UTF-16 units ever output. */
   readonly offset: number;
-  /** The last 131072 units at most, ending at `offset`. */
   readonly backlog: string;
   readonly state: TerminalState;
-  /** SSE streams, plus one per agent hold. */
   readonly listeners: number;
 }
 
 type TerminalRecord = NonNullable<typeof globalThis.__piWebTerminals> extends Map<string, infer R> ? R : never;
 
-/**
- * Reads the map as `getTerminalStats()` does: `registry()` would create it and install the
- * process handlers. Built for each call and never kept.
- */
 function records(): Map<string, TerminalRecord> | null {
   const terminals = globalThis.__piWebTerminals;
   return terminals instanceof Map ? terminals : null;
@@ -40,7 +33,6 @@ function snapshotOf(id: string, record: TerminalRecord): TerminalSnapshot {
   };
 }
 
-/** Every terminal, in creation order. */
 export function terminalSnapshots(): TerminalSnapshot[] {
   return [...records() ?? []].map(([id, record]) => snapshotOf(id, record));
 }
