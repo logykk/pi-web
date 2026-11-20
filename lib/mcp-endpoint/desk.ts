@@ -163,6 +163,22 @@ function userEntries(transcript: TranscriptSource): UserEntry[] {
     .map((entry) => ({ entryId: entry.id, text: contentText(entry.message?.content), time: entryTime(entry) }));
 }
 
+export async function canonicalDirectory(ports: Pick<PiWebPorts, "directory">, input: string): Promise<string> {
+  const path = input.trim();
+  if (path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) {
+    throw new ToolError(`${JSON.stringify(input)} is not an absolute path (or ~/…) on pi-web's machine.`);
+  }
+  const found = await ports.directory(path);
+  switch (found.kind) {
+    case "directory":
+      return found.path;
+    case "missing":
+      throw new ToolError(`${found.path} does not exist on pi-web's machine.`);
+    case "file":
+      throw new ToolError(`${found.path} is a file, not a folder.`);
+  }
+}
+
 export interface DeskMemory {
   readonly ledger: Ledger;
   readonly holds: Map<string, { touchedAt: number; dispose: () => void }>;
@@ -235,21 +251,7 @@ export function createDesk(ports: PiWebPorts, { ledger, holds, checkouts }: Desk
     return { messages, authors };
   }
 
-  async function directoryOf(input: string): Promise<string> {
-    const path = input.trim();
-    if (path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) {
-      throw new ToolError(`${JSON.stringify(input)} is not an absolute path (or ~/…) on pi-web's machine.`);
-    }
-    const found = await ports.directory(path);
-    switch (found.kind) {
-      case "directory":
-        return found.path;
-      case "missing":
-        throw new ToolError(`${found.path} does not exist on pi-web's machine.`);
-      case "file":
-        throw new ToolError(`${found.path} is a file, not a folder.`);
-    }
-  }
+  const directoryOf = (input: string) => canonicalDirectory(ports, input);
 
   async function heading(id: SessionId, transcript: TranscriptSource): Promise<SessionHeading> {
     const cwd = transcript.getCwd();
