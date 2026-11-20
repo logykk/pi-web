@@ -1,5 +1,17 @@
 # Pi Web
 
+## About this fork
+
+This is a soft fork of [agegr/pi-web](https://github.com/agegr/pi-web) that tracks upstream. It adds an MCP endpoint at `/mcp`, so an agent such as Claude Code can work in pi-web beside you:
+
+- **Shared pi sessions.** The agent lists, reads and starts sessions, sends messages, waits for pi's replies, answers extension questions, stops runs and creates git worktrees. You see its messages live in the browser, and it sees yours.
+- **Shared terminals.** The agent opens, reads and types into the same workspace terminal you have open. Either of you can start one the other joins.
+- **Catalog.** The agent lists the models, skills, MCP servers, subagent profiles and plugins pi has in a folder.
+
+The endpoint is off until `PI_WEB_MCP_TOKEN` is set. Setup and the full tool list are in [docs/mcp-endpoint.md](./docs/mcp-endpoint.md).
+
+The fork also lets `npm run dev` serve the hostnames in `PI_WEB_ALLOWED_HOSTS`, as the production server does, so the development server works behind a tunnel. The npm package `@agegr/pi-web` is upstream's and has none of this; run the fork from a clone of this repository.
+
 [中文文档](./docs/README.zh-CN.md) | [日本語](./docs/README.ja.md) | [Русский](./docs/README.ru.md)
 
 Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi). Pi Web uses the same local configuration and session files as pi, so you can browse and resume conversations, run agent turns, configure models and resources, and inspect project files from a browser.
