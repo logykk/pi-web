@@ -283,8 +283,8 @@ html[data-theme="zenburn"],
   --bg-subtle: rgba(220,220,204,0.04);
 }
 
-/* Fork: Zenith themes, #5d45b6 accent. Each variable has the tinted pairs' lightness (Mist/Pine, Lilac/Dusk, Sand/Ember) and the accent's hue,
-   with Lilac/Dusk's tint chroma; the dark theme keeps the dark accent, so text on it stays white. */
+/* Fork: Zenith themes, accent #5d45b6 (light) and #8152e0 (dark). Each variable has the tinted pairs' lightness (Mist/Pine, Lilac/Dusk,
+   Sand/Ember) and the accent's hue, with Lilac/Dusk's tint chroma; both accents are dark enough for white text on them. */
 [data-theme="zenith-light"] {
   color-scheme: light;
   --bg: #f7f6fd;
@@ -315,8 +315,8 @@ html[data-theme="zenith-dark"],
   --text: #e8e7f2;
   --text-muted: #c6c3da;
   --text-dim: #b1afcb;
-  --accent: #5d45b6;
-  --accent-hover: #6f60c0;
+  --accent: #8152e0;
+  --accent-hover: #9370e8;
   --accent-contrast: #ffffff;
   --user-bg: #2d2a3f;
   --assistant-bg: #1c1b26;
