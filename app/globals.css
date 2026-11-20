@@ -283,44 +283,45 @@ html[data-theme="zenburn"],
   --bg-subtle: rgba(220,220,204,0.04);
 }
 
-/* Fork: Zenith themes. Background, tint (selected, user messages) and accent are given; the rest sits between them in Lab. */
+/* Fork: Zenith themes, #5d45b6 accent. Each variable has the tinted pairs' lightness (Mist/Pine, Lilac/Dusk, Sand/Ember) and the accent's hue,
+   with Lilac/Dusk's tint chroma; the dark theme keeps the dark accent, so text on it stays white. */
 [data-theme="zenith-light"] {
   color-scheme: light;
-  --bg: #f6f5f8;
-  --bg-panel: #f0eff9;
-  --bg-hover: #eeecfa;
-  --bg-selected: #ebe9fa;
-  --border: #c2bfd5;
-  --text: #242327;
-  --text-muted: #5a595e;
-  --text-dim: #636368;
+  --bg: #f7f6fd;
+  --bg-panel: #edebf8;
+  --bg-hover: #e6e3f5;
+  --bg-selected: #dedaf2;
+  --border: #bfbade;
+  --text: #2a2838;
+  --text-muted: #55506f;
+  --text-dim: #5f5a79;
   --accent: #5d45b6;
-  --accent-hover: #4935a2;
+  --accent-hover: #4b3698;
   --accent-contrast: #ffffff;
-  --user-bg: #ebe9fa;
-  --assistant-bg: #f6f5f8;
-  --tool-bg: #f2f2f8;
-  --bg-subtle: rgba(60,40,140,0.04);
+  --user-bg: #eae6fc;
+  --assistant-bg: #f7f6fd;
+  --tool-bg: #f1effa;
+  --bg-subtle: rgba(41,28,86,0.04);
 }
 
 html[data-theme="zenith-dark"],
 [data-theme="zenith-dark"] {
   color-scheme: dark;
-  --bg: #0a0a0d;
-  --bg-panel: #141022;
-  --bg-hover: #17142f;
-  --bg-selected: #1f1b3f;
-  --border: #3b3555;
-  --text: #e9e7ef;
-  --text-muted: #bcbbc2;
-  --text-dim: #a6a5ac;
+  --bg: #1c1b26;
+  --bg-panel: #242332;
+  --bg-hover: #2e2c3d;
+  --bg-selected: #38364b;
+  --border: #4e4e72;
+  --text: #e8e7f2;
+  --text-muted: #c6c3da;
+  --text-dim: #b1afcb;
   --accent: #5d45b6;
-  --accent-hover: #7358cc;
+  --accent-hover: #6f60c0;
   --accent-contrast: #ffffff;
-  --user-bg: #181535;
-  --assistant-bg: #0a0a0d;
-  --tool-bg: #110e1a;
-  --bg-subtle: rgba(200,190,255,0.04);
+  --user-bg: #2d2a3f;
+  --assistant-bg: #1c1b26;
+  --tool-bg: #232230;
+  --bg-subtle: rgba(220,218,248,0.04);
 }
 
 /* WebKit reports dvh/innerHeight without the status-bar strip for installed
