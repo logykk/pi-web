@@ -123,10 +123,10 @@ test("a notification alone gets 202 and no body; a batch gets an array of its an
   assert.deepEqual(await batch.json(), [{ jsonrpc: "2.0", id: 2, result: {} }]);
 });
 
-test("tools/list lists the fourteen tools", async (t) => {
+test("tools/list lists the fifteen tools", async (t) => {
   endpointOn(t);
   const listed = await (await POST(mcp({ jsonrpc: "2.0", id: 3, method: "tools/list" }, { headers: { "mcp-protocol-version": "2025-11-25" } }))).json();
-  assert.equal(listed.result.tools.length, 14);
+  assert.equal(listed.result.tools.length, 15);
 });
 
 test("pi_sessions lists the saved session; a folder that does not exist is an error the model reads", async (t) => {

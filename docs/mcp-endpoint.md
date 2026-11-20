@@ -1,6 +1,6 @@
 # Let an agent work in Pi Web sessions over MCP
 
-Pi Web can serve an MCP endpoint at `/mcp` on its own address. An MCP client such as Claude Code then works in the same pi sessions you use in the browser: both of you send messages, and both of you see the whole conversation. Through the same endpoint the agent can list and read sessions, start sessions, create git worktrees, and type into the workspace terminals you have open.
+Pi Web can serve an MCP endpoint at `/mcp` on its own address. An MCP client such as Claude Code then works in the same pi sessions you use in the browser: both of you send messages, and both of you see the whole conversation. Through the same endpoint the agent can list and read sessions, start sessions, create git worktrees, list what pi has configured in a folder, and type into the workspace terminals you have open.
 
 This endpoint exists only in this fork of Pi Web.
 
@@ -100,6 +100,7 @@ No call keeps a response open longer than 50 seconds, so proxies with a 60-secon
 | `pi_stop` | Stops pi for everyone and lists the queued messages it withdrew. Does nothing when pi is idle. | `session` |
 | `pi_new_session` | Starts a session in an existing folder and sends its first message. | `cwd`, `message`, `model?` (`provider/modelId`), `thinking?`, `tools?` |
 | `pi_new_worktree` | Creates the worktree for a branch at `<repo>-worktrees/<branch>`, or returns the one that exists. Safe to repeat. | `project`, `branch` |
+| `pi_catalog` | Lists what pi has in a folder: models with the default model and thinking level, skills, MCP servers, subagent profiles and plugins. Without `kind`, an overview; with `kind`, that one in full. Changes nothing. | `cwd`, `kind?` (`models`, `skills`, `mcp`, `subagents` or `plugins`) |
 | `pi_terminals` | Lists the workspace terminals, yours and the agent's: id, folder, size, what runs in front, and whether Pi Web shows it. | `cwd?` |
 | `pi_terminal_open` | Joins a folder's running terminal or starts a shell there. Returns what it shows and a cursor. | `cwd` |
 | `pi_terminal_read` | Reads what a terminal shows now, or the lines before an earlier cursor. Keeps nothing alive. | `terminal`, `before?` |
@@ -118,6 +119,7 @@ No call keeps a response open longer than 50 seconds, so proxies with a 60-secon
 - It never trusts a project. In a folder that needs trust, the session starts without the project's extensions until you trust the folder in Pi Web.
 - It does not remove worktrees, and it never fetches: a new branch starts from the main checkout's `HEAD`, or from `origin/<branch>` when that was fetched already.
 - New sessions go in any existing folder on the machine, under the folder's real path.
+- `pi_catalog` reads only folders Pi Web knows: one that a session or terminal uses, as the browser's settings panels do. It shows the names of MCP servers, never their commands, addresses, headers or environment values. A list longer than one reply (40000 characters) says how many entries it left out; there are no further pages.
 - A wrong token answers 401 and does not count toward the web login's lockout, so a stranger guessing tokens cannot lock you out of the web UI.
 - If you send in the browser in the moment before your page learns that the agent started a run, pi refuses the plain send, and the page queues your message as a follow-up instead, as the Follow-up button would. An extension that reacts to what you type then sees that message twice, because pi runs it before it refuses the send.
 - Labels live in memory. After Pi Web restarts, earlier messages read `[user]`. A slash command the agent sends that pi expands into other text reads `[person]`.

@@ -4,7 +4,9 @@ import { realpath, stat } from "node:fs/promises";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { normalizeDirectory, resolveDirectory } from "../directory-browser";
 import { isBlockingExtensionUiRequest } from "../extension-ui-queue";
-import { allowFileRoot } from "../file-access";
+import { allowFileRoot, getAllowedFileRoots, isExistingFilePathAllowed } from "../file-access";
+import type { McpResponse, PluginsResponse, SkillsResponse } from "../api-types";
+import type { ModelsData } from "../models-cache";
 import { getProjectTrustStatus } from "../project-trust";
 import {
   getAwaitingInputRpcSessionIds, getRpcSession, getRpcSessionInfos, getRunningRpcSessionIds, startRpcSession,
@@ -22,6 +24,7 @@ import { createTerminal, killTerminal, subscribeTerminal, writeTerminal } from "
 import { getToolNamesForPreset, type ToolPreset } from "../tool-presets";
 import type { AgentMessage, BlockingExtensionUiRequest, ExtensionUiRequest, ExtensionUiResponse, SessionEntry } from "../types";
 import { addWorktree, resolveProject, WorktreeBranchInUseError } from "../worktree";
+import { CatalogSourceError, type CatalogSource } from "./catalog";
 import type { BranchReader, EntryLike } from "./transcript";
 
 export type SessionEvent =
@@ -229,6 +232,118 @@ async function lookupDirectory(path: string): Promise<DirectoryLookup> {
     return { kind: "missing", path: normalizeDirectory(path) };
   }
   return (await stat(real)).isDirectory() ? { kind: "directory", path: real } : { kind: "file", path: real };
+}
+
+/** A route's GET, called in process: its checks (allowed roots, trust, the shared caches) are the browser's. */
+async function routeJson<T>(get: (request: Request) => Promise<Response>, path: string, cwd: string): Promise<T> {
+  const response = await get(new Request(`http://pi-web.invalid${path}?${new URLSearchParams({ cwd })}`));
+  const body = await response.json() as T & { error?: unknown };
+  if (!response.ok) throw new CatalogSourceError(response.status, typeof body.error === "string" ? body.error : response.statusText);
+  return body;
+}
+
+/** pi's `sourceInfo.source` for a resource that no package brought. */
+const NOT_A_PACKAGE = new Set(["local", "auto", "cli", "sdk", "builtin"]);
+
+/** A link's `user:password@` part is a credential: never in a reply. */
+function withoutUserinfo(text: string): string {
+  return text.replace(/\/\/[^/@\s]*@/g, "//");
+}
+
+/**
+ * Each source is imported on first use: the routes and the skills service import through `@/`,
+ * and the SDK services behind them load only when an agent asks.
+ */
+export function piWebCatalog(): CatalogSource {
+  return {
+    directory: lookupDirectory,
+    load: {
+      async models(cwd) {
+        const { GET } = await import("../../app/api/models/route");
+        const data = await routeJson<ModelsData>(GET, "/api/models", cwd);
+        return {
+          kind: "models",
+          models: data.modelList.map((model) => ({ ref: `${model.provider}/${model.id}`, name: model.name, providerName: model.providerName })),
+          defaultModel: data.defaultModel ? `${data.defaultModel.provider}/${data.defaultModel.modelId}` : null,
+          defaultThinkingLevel: data.defaultThinkingLevel,
+          scoped: data.isScoped === true,
+          warnings: data.modelScopeWarnings ?? [],
+          error: data.modelError ?? null,
+        };
+      },
+
+      async skills(cwd) {
+        const { GET } = await import("../../app/api/skills/route");
+        const data = await routeJson<SkillsResponse>(GET, "/api/skills", cwd);
+        return {
+          kind: "skills",
+          skills: data.skills.map((skill) => ({
+            name: skill.name,
+            description: skill.description,
+            scope: skill.sourceInfo.scope === "user" ? "global" : skill.sourceInfo.scope ?? null,
+            fromPackage: skill.sourceInfo.source && !NOT_A_PACKAGE.has(skill.sourceInfo.source) ? withoutUserinfo(skill.sourceInfo.source) : null,
+            modelInvocation: !skill.disableModelInvocation,
+          })),
+          diagnostics: data.diagnostics.length,
+          projectLoaded: data.projectResourcesLoaded,
+        };
+      },
+
+      async mcp(cwd) {
+        // Files only: nothing is spawned or connected. Never a value, header or URL: names and transport.
+        const { GET } = await import("../../app/api/mcp/route");
+        const data = await routeJson<McpResponse>(GET, "/api/mcp", cwd);
+        return {
+          kind: "mcp",
+          unavailable: data.mcp.available ? null : data.mcp.error,
+          servers: data.servers.map((server) => ({
+            name: server.name,
+            scope: server.scope,
+            enabled: server.enabled,
+            invalid: server.invalidError !== undefined || server.notAnObject === true,
+            transport: server.transport ?? null,
+            exposure: server.exposure ?? null,
+            description: server.description ?? null,
+            relation: server.shadowedByProject || server.overriddenByProject ? "replaced-by-project" : server.override ? "project-override" : null,
+          })),
+          projectUntrusted: data.project?.trust?.decision !== true,
+          fileProblems: data.files.filter((file) => file.problems.length > 0).map((file) => ({ path: file.path, count: file.problems.length })),
+        };
+      },
+
+      async subagents(cwd) {
+        if (!isExistingFilePathAllowed(cwd, await getAllowedFileRoots())) throw new CatalogSourceError(403, "Access denied");
+        const [{ listSubagentProfiles }, { isBuiltInSubagentsEnabled }] = await Promise.all([import("../subagents"), import("../subagent-settings")]);
+        return {
+          kind: "subagents",
+          enabled: isBuiltInSubagentsEnabled(),
+          profiles: listSubagentProfiles(cwd).map((profile) => ({
+            name: profile.name, description: profile.description, scope: profile.scope, enabled: profile.enabled,
+          })),
+          projectLoaded: getProjectTrustStatus(cwd, getAgentDir()).trusted,
+        };
+      },
+
+      async plugins(cwd) {
+        const { GET } = await import("../../app/api/plugins/route");
+        const data = await routeJson<PluginsResponse>(GET, "/api/plugins", cwd);
+        return {
+          kind: "plugins",
+          packages: data.packages.map((pkg) => ({
+            source: withoutUserinfo(pkg.source),
+            scope: pkg.scope,
+            status: pkg.status,
+            version: pkg.version ?? pkg.configuredVersion ?? null,
+            description: pkg.description ?? null,
+            counts: pkg.counts,
+          })),
+          extensions: data.standaloneExtensions.map((extension) => ({ name: extension.name, scope: extension.scope, enabled: extension.enabled })),
+          diagnostics: data.diagnostics.length,
+          projectLoaded: data.projectResourcesLoaded,
+        };
+      },
+    },
+  };
 }
 
 export type TerminalId = string & { readonly __brand: "TerminalId" };
